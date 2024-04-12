@@ -1,4 +1,4 @@
-![PASCALv4 cover photo](pascal_github_bg.png)
+![PASCALv4 cover photo](img/pascal_github_bg.png)
 # Pan-Arctic Behavioral and Life-history Simulator for Calanus (PASCAL) v.4.0
 ## Repository Overview
 This is the fourth iteration of PASCAL (Pan-Arctic Behavioral and Life-history Simulator for Calanus) developed under the Norwegian Research Council funded project, Migratory Crossroads (2024-2027). PASCAL v4.0 builds on its previous versions and brings the largest changes since its inception in 2016. These include changes to the core model architecture, modular structure, improved computational efficiency & scalability and support for parallel processing. The main branch of the repository published here on 12.04.2024 is the initial version that has been throughlly debugged and tested for its correct functionality. For the time being, the current repository should only be used among the collaborators for model improvement (e.g., environment update, submodel update, 1D-3D coupling, parallel framework establishment) and is not suitable for actual deployment. The model needs validation with field data, which will be performed when the field data of Migratory Crossroads Work Package-2 (WP2) will be available in Q2, 2025. Until then, the model outputs must be interpreted with extreme caution.
@@ -19,16 +19,20 @@ Then, clone the git repository as:
 git clone https://github.com/Kanchana-Bandara/PASCAL-v4.0.git
 ```
 
-When the repository is cloned, you may see two empty folders inside the cloned repository; __inpputdata__ and __outputdata__. If you don´t see these, create two folders inside the working directory (or elsewhere) by the name of __inputdata__ and __outputdata__. These are locations to store files - i.e., __inputdata__ for storing model environment files that are read during the model execution and __outputdata__ for storing model outputs. 
+When the repository is cloned, you may see two empty folders inside the cloned repository; __inpputdata__ and __outputdata__. These are locations to store files - i.e., __inputdata__ for storing model environment files that are read during the model execution and __outputdata__ for storing model outputs. 
+
+__NB:__ The input and output files are not mandatory to be stored in these directories. You can store them wherever desired, but make sure that the correct directory path is added to the model as a reference (see below).
+
+__WARNING:__ When you store input and output data in your local repository, do not stage, commit and push those files to the GitHub repository! Use the __.gitignore__ file and add these folders to exceptions list (e.g., _/inputdata_ and _/outputdata_).
 
 The input data files are not included in this repository due to the large file size (ca. 16 GB). The input data files can be downloaded via Sharepoint here. Make sure that you unzip the files first before copying/moving them to the __inputdata__ folder of the working directory. Eventually, make sure that the __inputdata__ folder looks something like the following:
 
-![the structure of the inputdata folder](inputdata_view.png)
+![the structure of the inputdata folder](img/inputdata_view.png)
 
 ## Software requirements
 The model is written entirely on Python. Please make sure that you have a working Python instance installed in your machine (> 10.7). The model is relient on several python libraries. In your current base environment or in a new virtual environment linked to the model, use the package manager (pip or Conda) to install the following packages: __numpy, pandas, pathlib, os, sys, math, netCDF4, time, datetime and termcolor__. Some of these libraries are installed automatically with Python installation.
 
-![the list of libraries needed to run the model](dependencies_view.png)
+![the list of libraries needed to run the model](img/dependencies_view.png)
 
 ## Setting up input and output paths
 The model uses __pathlib__ library to setup input and output data paths. These must be set correctly, otherwise the model will not run. 
@@ -39,9 +43,9 @@ __Output data path:__ Similarly find the path to the __outputdata__ folder where
 
 Then, replace the paths already specified in the __inputdatapath__ and __outputpath__  in the pascalv4_main.py file with your input and output data paths, respectively (make sure to write the path in double quotes as displayed below).
 
-![the inputdata path](input_path_view.png)
+![the inputdata path](img/input_path_view.png)
 
-![the output path](output_path_view.png)
+![the output path](img/output_path_view.png)
 
 
 ## Memory and disk space requirements
@@ -58,7 +62,7 @@ If all the steps above have been followed correctly, then the model should run w
 The model is tested and guranteed to run on Mac and Linux. Although the functionality has not been tested yet, it should run on Windows without an issue also.
 
 ## Collaborating to the model development
-Those who are tasked with or wish to contribute to the model development __must work on their own branch__ and __must not commit and push changes to the main branch__. None of the changes pushed to the main branch will be adopted! Branches will be merged to the main branch later. Also __do not commit and push input and output data files to the repository__ add those as an exception to __.gitignore__ file in the repository - so they are not staged & committed.
+Those who are tasked with or wish to contribute to the model development __must work on their own branch__ and __must not commit and push changes to the main branch__. None of the changes pushed to the main branch will be adopted! Branches will be merged to the main branch later. Also __do not commit and push input and output data files or files related to your Python virtual environment to the GitHub repository__ add those as an exception to __.gitignore__ file - so they are not staged, committed or pushed.
 
 ## Contact
 If you have issues with cloning the repository, understanding the code or anything else, please contact _Kanchana Bandara_ via email or MS Teams.
