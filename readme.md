@@ -49,7 +49,7 @@ Then, replace the paths already specified in the __inputdatapath__ and __outputp
 
 
 ## Memory and disk space requirements
-The model outputs can be heavy (ca. 350 Mb per log file for a ca. 100x100 km grid per calendar year), so, ensure that there is sufficient hard disk space for storing outputs. If you are running on an SSD with limited space, make the __outputdata__ folder outside of the working directory - e.g., in an external hard drive (and add the correct path to the model outputs - more about this below). These files easily scale up when increasing the spatio-temporal coverage. 
+The model outputs can be heavy (ca. 350 MB per log file for a ca. 100x100 km grid per calendar year), so, ensure that there is sufficient hard disk space for storing outputs. If you are running on an SSD with limited space, make the __outputdata__ folder outside of the working directory - e.g., in an external hard drive (and add the correct path to the model outputs - more about this below). These files easily scale up when increasing the spatio-temporal coverage. 
 
 For a 100x100 km grid, the model execution requires ca. 7-8 GB of free memory (RAM). 
 
