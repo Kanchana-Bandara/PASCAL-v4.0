@@ -25,7 +25,7 @@ __NB:__ The input and output files are not mandatory to be stored in these direc
 
 __WARNING:__ When you store input and output data in your local repository, do not stage, commit and push those files to the GitHub repository! Use the __.gitignore__ file and add these folders to exceptions list (e.g., _/inputdata_ and _/outputdata_).
 
-The input data files are not included in this repository due to the large file size (ca. 16 GB). The input data files can be downloaded via Sharepoint here. Make sure that you unzip the files first before copying/moving them to the __inputdata__ folder of the working directory. Eventually, make sure that the __inputdata__ folder looks something like the following:
+The input data files are not included in this repository due to the large file size (ca. 14.4 GB). The input data files can be downloaded via Sharepoint here. Make sure that you unzip the files first before copying/moving them to the __inputdata__ folder of the working directory. Eventually, make sure that the __inputdata__ folder looks something like the following:
 
 ![the structure of the inputdata folder](img/inputdata_view.png)
 
@@ -56,7 +56,7 @@ For a 100x100 km grid, the model execution requires ca. 7-8 GB of free memory (R
 Thanks to the new model architecture, the memory (RAM) and disk space __does not__ signficantly scale up or down depending on the no. of super individuals in the simulation (but, computational time does).
 
 ## Running the model
-If all the steps above have been followed correctly, then the model should run without any issue. Some user input is needed at the beginning to verify certain things. When the model is running, model status will be printed to the screen at regular intervals.
+If all the steps above have been followed correctly, then the model should run without any issue. Some user input is needed at the beginning to verify certain things, such as input file dimensions and run IDs. When the model is running, a progress status will be printed to the screen at regular intervals.
 
 ## OS
 The model is tested and guranteed to run on Mac and Linux. Although the functionality has not been tested yet, it should run on Windows without an issue also.
