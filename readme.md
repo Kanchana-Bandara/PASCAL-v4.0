@@ -19,7 +19,7 @@ Then, clone the git repository as:
 git clone https://github.com/Kanchana-Bandara/PASCAL-v4.0.git
 ```
 
-When the repository is cloned, you can see two empty folders inside the cloned repository; __inpputdata__ and __outputdata__. These are locations to store files - i.e., __inputdata__ for storing model environment files that are read during the model execution and __outputdata__ for storing model outputs. 
+When the repository is cloned, you may see two empty folders inside the cloned repository; __inpputdata__ and __outputdata__. If you don´t see these, create two folders inside the working directory (or elsewhere) by the name of __inputdata__ and __outputdata__. These are locations to store files - i.e., __inputdata__ for storing model environment files that are read during the model execution and __outputdata__ for storing model outputs. 
 
 The input data files are not included in this repository due to the large file size (ca. 16 GB). The input data files can be downloaded via Sharepoint here. Make sure that you unzip the files first before copying/moving them to the __inputdata__ folder of the working directory. Eventually, make sure that the __inputdata__ folder looks something like the following:
 
