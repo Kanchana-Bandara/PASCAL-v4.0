@@ -58,7 +58,7 @@ If all the steps above have been followed correctly, then the model should run w
 The model is tested and guranteed to run on Mac and Linux. Although the functionality has not been tested yet, it should run on Windows without an issue also.
 
 ## Collaborating to the model development
-Those who are tasked with or wish to contribute to the model development __must work on their own branch__ and __do not commit and push changes to the main branch__. None of the changes pushed to the main branch will be adopted! Branches will be merged to the main branch later.
+Those who are tasked with or wish to contribute to the model development __must work on their own branch__ and __must not commit and push changes to the main branch__. None of the changes pushed to the main branch will be adopted! Branches will be merged to the main branch later. Also __do not commit and push input and output data files to the repository__ add those as an exception to __.gitignore__ file in the repository - so they are not staged & committed.
 
 ## Contact
 If you have issues with cloning the repository, understanding the code or anything else, please contact _Kanchana Bandara_ via email or MS Teams.
