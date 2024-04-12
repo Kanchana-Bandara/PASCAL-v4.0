@@ -25,7 +25,7 @@ __NB:__ The input and output files are not mandatory to be stored in these direc
 
 __WARNING:__ When you store input and output data in your local repository, do not stage, commit and push those files to the GitHub repository! Use the __.gitignore__ file and add these folders to exceptions list (e.g., _/inputdata_ and _/outputdata_).
 
-The input data files are not included in this repository due to the large file size (ca. 14.4 GB). The input data files can be downloaded via Sharepoint here. Make sure that you unzip the files first before copying/moving them to the __inputdata__ folder of the working directory. Eventually, make sure that the __inputdata__ folder looks something like the following:
+The input data files are not included in this repository due to the large file size (ca. 14.4 GB). The input data files can be downloaded via OneDrive [here](https://akvaplan-my.sharepoint.com/:f:/g/personal/kba_akvaplan_niva_no/EltjxosCYRlEuXPIbQnjG24BN1tCNPm2ndPLFWZb1AAprQ?e=GVtY0I). Make sure that you unzip the files first before copying/moving them to the __inputdata__ folder of the working directory. Eventually, make sure that the __inputdata__ folder looks something like the following:
 
 ![the structure of the inputdata folder](img/inputdata_view.png)
 
