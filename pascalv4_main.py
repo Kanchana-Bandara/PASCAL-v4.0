@@ -2646,7 +2646,7 @@ for currentsubpopulation in range(nsubpopulations):
                 timevar[:] = np.arange(0, 1460, 1)
                 datavar[:] = spatialdistribution_ps
 
-                #file2: space-, time-, and tage-specific population size (datatype = np.float32)
+                #file2: space-, time-, and tage-specific biomass (datatype = np.float32)
                 #-------------------------------------------------------------------------------
                 #nb: dimensions: <stage> <longitude> <latitude> <depth> <time>
                 #datafile creation
@@ -2689,7 +2689,7 @@ for currentsubpopulation in range(nsubpopulations):
                 timevar.units = "6 h"
                 timevar.longname = "time of year in 6h intervals"
 
-                datavar = biomass_ds.createVariable("popsize", np.float32, ("devstage", "lon", "lat", "depth", "time", ))
+                datavar = biomass_ds.createVariable("biomass", np.float32, ("devstage", "lon", "lat", "depth", "time", ))
                 datavar.units = "gC"
                 datavar.longname = "estimated stage-, time- and space-specific biomass of Calanus finmarchicus"
 
