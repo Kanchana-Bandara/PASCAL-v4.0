@@ -61,7 +61,7 @@ def growthanddevelopment_dsc1(temperature: float, devcoef: float, thist: float, 
 
 #end def
 
-def growthanddevelopment_dsc2(temperature: float, f1con: float, strmass: float, maxzd: int, actzd: int, modelres: int) -> float:
+def growthanddevelopment_dsc2(temperature: float, maxtemperature: float, f1con: float, strmass: float, maxzd: int, actzd: int, modelres: int) -> float:
 
     """
     functionality:
@@ -73,6 +73,7 @@ def growthanddevelopment_dsc2(temperature: float, f1con: float, strmass: float, 
 
     args:
     temperature              : ambient temperature (4D: t, z, x, y)
+    maxtemperature           : maximum ambient temperature
     f1con                    : ambient category#1 food concentration (i.e., phytoplankton)
     strmass                  : the somatic body mass (s, t)
     maxzd                    : the maximum vertical distance searhable by the super individual (s, t)
@@ -120,6 +121,7 @@ def growthanddevelopment_dsc2(temperature: float, f1con: float, strmass: float, 
     mass_metabolicexpo = 0.7502
     temp_metabolicexpo = 0.1170
     ambmscalar = 1.50
+    sdascalar = 1.60
 
     #this is the mass aspect of basal metabolic rate at a reference temperature of -2.00 C
     basalmetabolicrate_mass = mass_metaboliccoef * (strmass ** mass_metabolicexpo)
@@ -130,15 +132,20 @@ def growthanddevelopment_dsc2(temperature: float, f1con: float, strmass: float, 
     #the differential distances are computed in the vertical migration submodel (see vm module)
     #no need of multiplying the active metabolic rate with "modelres" as it works atop the resolution-adjusted basal metabolic rate
     activemetabolicrate = ambmscalar * basalmetabolicrate * (actzd / maxzd)
+    #this estimates the specific dynamic action (sda) - which scales with the ingestion rate
+    #the max. value for the scalar is 1.60 (based on Thor, 2002: https://doi.org/10.1016/S0022-0981(02)00131-4) 
+    #this is scaled based on the max. ingestion rate (at highest temperature, no food limitation) to current ingestion rate ratio
+    ingestionrate_max = ingestionrate_mass * temp_ingestioncoef * math.exp(temp_ingestionexpo * maxtemperature)
+    sda = basalmetabolicrate * sdascalar * (ingestionrate_food / ingestionrate_max)
 
     #the net growth rate is the difference between the assimilation rate and the total metabolic rate
-    growthrate = (modelres * assimilationrate) - (basalmetabolicrate + activemetabolicrate)
+    growthrate = (modelres * assimilationrate) - (basalmetabolicrate + activemetabolicrate + sda)
     
     return growthrate
 
 #end def
 
-def growthanddevelopment_dsc3a(temperature: float, f1con: float, strmass: float, resmass: float, maxzd: int, actzd: int, modelres: int) -> float:
+def growthanddevelopment_dsc3a(temperature: float, maxtemperature: float, f1con: float, strmass: float, resmass: float, maxzd: int, actzd: int, modelres: int) -> float:
 
     """
     functionality:
@@ -154,6 +161,7 @@ def growthanddevelopment_dsc3a(temperature: float, f1con: float, strmass: float,
 
     args:
     temperature              : ambient temperature (4D: t, z, x, y)
+    maxtemperature           : maximum ambient temperature
     f1con                    : ambient category#1 food concentration (i.e., phytoplankton)
     strmass                  : the somatic body mass (s, t)
     resmass                  : the mass of the energy reserve (s, t)
@@ -203,6 +211,7 @@ def growthanddevelopment_dsc3a(temperature: float, f1con: float, strmass: float,
     mass_metabolicexpo = 0.7502
     temp_metabolicexpo = 0.1170
     ambmscalar = 1.50
+    sdascalar = 1.60
 
     #this estimates the total body mass of the super individual
     totalmass = strmass + resmass
@@ -216,9 +225,14 @@ def growthanddevelopment_dsc3a(temperature: float, f1con: float, strmass: float,
     #the differential distances are computed in the vertical migration submodel (see vm module)
     #no need of multiplying the active metabolic rate with "modelres" as it works atop the resolution-adjusted basal metabolic rate
     activemetabolicrate = ambmscalar * basalmetabolicrate * (actzd / maxzd)
+    #this estimates the specific dynamic action (sda) - which scales with the ingestion rate
+    #the max. value for the scalar is 1.60 (based on Thor, 2002: https://doi.org/10.1016/S0022-0981(02)00131-4) 
+    #this is scaled based on the max. ingestion rate (at highest temperature, no food limitation) to current ingestion rate ratio
+    ingestionrate_max = ingestionrate_mass * temp_ingestioncoef * math.exp(temp_ingestionexpo * maxtemperature)
+    sda = basalmetabolicrate * sdascalar * (ingestionrate_food / ingestionrate_max)
 
     #the net growth rate is the difference between the assimilation rate and the total metabolic rate
-    growthrate = (modelres * assimilationrate) - (basalmetabolicrate + activemetabolicrate)
+    growthrate = (modelres * assimilationrate) - (basalmetabolicrate + activemetabolicrate + sda)
     
     return growthrate
 
@@ -380,7 +394,7 @@ def growthanddevelopment_dsc3x(temperature: float, strmass: float, resmass: floa
 
 #end def
 
-def growthanddevelopment_dsc3p(temperature: float, f1con: float, strmass: float, resmass: float, maxzd: int, actzd: int, modelres: int) -> float:
+def growthanddevelopment_dsc3p(temperature: float, maxtemperature: float, f1con: float, strmass: float, resmass: float, maxzd: int, actzd: int, modelres: int) -> float:
 
     """
     functionality:
@@ -396,6 +410,7 @@ def growthanddevelopment_dsc3p(temperature: float, f1con: float, strmass: float,
 
     args:
     temperature              : ambient temperature (4D: t, z, x, y)
+    maxtemperature           : maximum ambient temperature
     f1con                    : ambient category#1 food concentration (i.e., phytoplankton)
     strmass                  : the somatic body mass (s, t)
     resmass                  : the mass of the energy reserve (s, t)
@@ -445,6 +460,7 @@ def growthanddevelopment_dsc3p(temperature: float, f1con: float, strmass: float,
     mass_metabolicexpo = 0.7502
     temp_metabolicexpo = 0.1170
     ambmscalar = 1.50
+    sdascalar = 1.60
 
     #this estimates the total body mass of the super individual
     totalmass = strmass + resmass
@@ -458,15 +474,20 @@ def growthanddevelopment_dsc3p(temperature: float, f1con: float, strmass: float,
     #the differential distances are computed in the vertical migration submodel (see vm module)
     #no need of multiplying the active metabolic rate with "modelres" as it works atop the resolution-adjusted basal metabolic rate
     activemetabolicrate = ambmscalar * basalmetabolicrate * (actzd / maxzd)
+    #this estimates the specific dynamic action (sda) - which scales with the ingestion rate
+    #the max. value for the scalar is 1.60 (based on Thor, 2002: https://doi.org/10.1016/S0022-0981(02)00131-4) 
+    #this is scaled based on the max. ingestion rate (at highest temperature, no food limitation) to current ingestion rate ratio
+    ingestionrate_max = ingestionrate_mass * temp_ingestioncoef * math.exp(temp_ingestionexpo * maxtemperature)
+    sda = basalmetabolicrate * sdascalar * (ingestionrate_food / ingestionrate_max)
 
     #the net growth rate is the difference between the assimilation rate and the total metabolic rate
-    growthrate = (modelres * assimilationrate) - (basalmetabolicrate + activemetabolicrate)
+    growthrate = (modelres * assimilationrate) - (basalmetabolicrate + activemetabolicrate + sda)
     
     return growthrate
 
 #end def
 
-def growthanddevelopment_dsc4f(temperature: float, f1con: float, strmass: float, resmass: float, maxzd: int, actzd: int, modelres: int) -> float:
+def growthanddevelopment_dsc4f(temperature: float, maxtemperature: float, f1con: float, strmass: float, resmass: float, maxzd: int, actzd: int, modelres: int) -> float:
 
     """
     functionality:
@@ -482,6 +503,7 @@ def growthanddevelopment_dsc4f(temperature: float, f1con: float, strmass: float,
 
     args:
     temperature              : ambient temperature (4D: t, z, x, y)
+    maxtemperature           : maximum ambient temperature
     f1con                    : ambient category#1 food concentration (i.e., phytoplankton)
     strmass                  : the somatic body mass (s, t)
     resmass                  : the mass of the energy reserve (s, t)
@@ -531,6 +553,7 @@ def growthanddevelopment_dsc4f(temperature: float, f1con: float, strmass: float,
     mass_metabolicexpo = 0.7502
     temp_metabolicexpo = 0.1170
     ambmscalar = 1.50
+    sdascalar = 1.60
 
     #this estimates the total body mass of the super individual
     totalmass = strmass + resmass
@@ -544,9 +567,14 @@ def growthanddevelopment_dsc4f(temperature: float, f1con: float, strmass: float,
     #the differential distances are computed in the vertical migration submodel (see vm module)
     #no need of multiplying the active metabolic rate with "modelres" as it works atop the resolution-adjusted basal metabolic rate
     activemetabolicrate = ambmscalar * basalmetabolicrate * (actzd / maxzd)
+    #this estimates the specific dynamic action (sda) - which scales with the ingestion rate
+    #the max. value for the scalar is 1.60 (based on Thor, 2002: https://doi.org/10.1016/S0022-0981(02)00131-4) 
+    #this is scaled based on the max. ingestion rate (at highest temperature, no food limitation) to current ingestion rate ratio
+    ingestionrate_max = ingestionrate_mass * temp_ingestioncoef * math.exp(temp_ingestionexpo * maxtemperature)
+    sda = basalmetabolicrate * sdascalar * (ingestionrate_food / ingestionrate_max)
 
     #the net growth rate is the difference between the assimilation rate and the total metabolic rate
-    growthrate = (modelres * assimilationrate) - (basalmetabolicrate + activemetabolicrate)
+    growthrate = (modelres * assimilationrate) - (basalmetabolicrate + activemetabolicrate + sda)
     
     return growthrate
 

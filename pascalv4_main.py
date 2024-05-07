@@ -550,6 +550,9 @@ maxfood1concentration_idx = np.argmin(abs(food1concentrationgrade - maxfood1conc
 cmm_lower = cmm[:, maxfood1concentration_idx, maxtemperature_idx]
 cmm_upper = cmm[:, maxfood1concentration_idx, mintemperature_idx]
 
+#recomputing the maxtemperature as a float32 (for growth submodel)
+maxtemperature = np.nanmax(temperature[:, :, :, :])
+
 #three-tier iterative computing
 #=========================================================================================================================================================================================================================================================
 
@@ -1183,7 +1186,8 @@ for currentsubpopulation in range(nsubpopulations):
                     #this function estimates the somatic growth rate, which is used in the calculation of development rate (= 1 / developmental time)
                     #only somatic growth (structural growth) occurs at this stage, no energy reserves are maintained
                     #the function takes ambient temperature and food concentration as environmental inputs and current structural mass and developmental stage as internal state inputs
-                    currentgrowthrate = gd.growthanddevelopment_dsc2(temperature = currenttemperature, 
+                    currentgrowthrate = gd.growthanddevelopment_dsc2(temperature = currenttemperature,
+                                                                    maxtemperature = maxtemperature, 
                                                                     f1con = currentfood1concentration, 
                                                                     strmass = currentstructuralmass, 
                                                                     maxzd = currentmaxzdistance, 
@@ -1359,7 +1363,8 @@ for currentsubpopulation in range(nsubpopulations):
 
                         #this function estimates the somatic growth rate, which is used in calculating the development rate (= 1 / development time)
                         #the function takes ambient temperature and food concentration as environmental inputs and current structural & reserve masses as internal state inputs
-                        currentgrowthrate = gd.growthanddevelopment_dsc3a(temperature = currenttemperature, 
+                        currentgrowthrate = gd.growthanddevelopment_dsc3a(temperature = currenttemperature,
+                                                                        maxtemperature= maxtemperature, 
                                                                         f1con = currentfood1concentration, 
                                                                         strmass = currentstructuralmass, 
                                                                         resmass = currentreservemass,
@@ -2034,7 +2039,8 @@ for currentsubpopulation in range(nsubpopulations):
 
                         #this function estimates the somatic growth rate and developmental rates (development is a function of growth - stage progression is coded below)
                         #the function takes ambient temperature and food concentration as environmental inputs and current structural & reserve masses as internal state inputs
-                        currentgrowthrate = gd.growthanddevelopment_dsc3p(temperature = currenttemperature, 
+                        currentgrowthrate = gd.growthanddevelopment_dsc3p(temperature = currenttemperature,
+                                                                        maxtemperature = maxtemperature, 
                                                                         f1con = currentfood1concentration, 
                                                                         strmass = currentstructuralmass, 
                                                                         resmass = currentreservemass,
@@ -2242,7 +2248,8 @@ for currentsubpopulation in range(nsubpopulations):
                         #this function estimates the somatic growth rate and developmental rates (development is a function of growth - stage progression is coded below)
                         #the function takes ambient temperature and food concentration as environmental inputs and current structural & reserve masses as internal state inputs
                         #this is female-specific (growth/degrowth both possible)
-                        currentgrowthrate = gd.growthanddevelopment_dsc4f(temperature = currenttemperature, 
+                        currentgrowthrate = gd.growthanddevelopment_dsc4f(temperature = currenttemperature,
+                                                                        maxtemperature = maxtemperature, 
                                                                         f1con = currentfood1concentration, 
                                                                         strmass = currentstructuralmass, 
                                                                         resmass = currentreservemass,
