@@ -1,5 +1,6 @@
 /pascalv4
 /__pycache__
+/pascalv4vm
 .DS_Store
 pascalv4_main_000.py
 pascalv4_main_001.py
@@ -18,3 +19,4 @@ pascalv4_main_013.py
 pascalv4_main_014.py
 pascalv4_test_001.py
 test.py
+testpad.py
