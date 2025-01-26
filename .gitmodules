@@ -1,0 +1,3 @@
+[submodule "opendrift"]
+	path = opendrift
+	url = https://github.com/OpenDrift/opendrift.git
