@@ -24,12 +24,17 @@ import pascalv4_mod_verticalmigration as vm
 import pascalv4_mod_growthanddevelopment as gd
 import pascalv4_mod_survival as sv
 import pascalv4_mod_reproduction as rp
-from functools import cached_property
 
-class superindividual(object):
-    def __init__(self, global_settings, diapausedepth, eggmass=0.23, nindividuals=10000):
+class dotdict(dict):
+    """dot.notation access to dictionary attributes"""
+    __getattr__ = dict.get
+    __setattr__ = dict.__setitem__
+    __delattr__ = dict.__delitem__
+
+class SuperIndividual(object):
+    def __init__(self, global_settings, diapausedepth, environment, environment_index, eggmass=0.23, nindividuals=10000, genes=None, cxthreshold=0.7, muthreshold=0.2, datalogger=None):
         #these are reflective of individual states and vary during the lifespan of super individuals depending on the individual-environment interactions and internal processes (e.g., hardcoded strategies)
-        self.global_settings = global_settings        
+        self.global_settings = global_settings
         self.eggmass = eggmass
 
         #defines the living (1) or dead (0) state of super individuals
@@ -71,6 +76,8 @@ class superindividual(object):
         #defines whether the super individual will enter diapause and then potentially molt to the adult or potentilly develop directly to adulthood without diapause
         self.diapausestrategy = -1
         #nb:no need to track structural mass or developmental stage at diapsue exit as those do not change
+        self.adultsize = 0
+    
         self.reservemassatdiapauseexit = 0.00
         #defines the insemination state of females (0: not inseminated, 1: inseminated)
         self.inseminationstate = 0
@@ -92,54 +99,54 @@ class superindividual(object):
 #all evolvable attributes range from 0 - 1 in floating point designation
         #defines the body size trajectory that a super individual follows during its lifespan
         #nb: pascalv4 does not support p2sensitivity or p2reactivity attributes - these can be included in future developments
-        self.a1_bodysize = 0.00
-        #defines the spectral sensitivity of a given super individual
-        self.a2_irradiancesensitivity = 0.00
-        #defines the visual predator sensitivity (i.e., the ability of a super individual to percieve a visual predator in its environment)
-        self.a3_pred1sensitivity = 0.00
-        #defines the reactivity to visual predators
-        self.a4_pred1reactivity = 0.00
-        #defines the energy allocation pattern of a given super individual
-        self.a5_energyallocation = 0.00
-        #defines the probability of diapause entry of a given super individual (higher: likely to diapause, lower: less likely to diapause and more likely to develop directly to adulthood)
-        self.a6_diapauseprobability = 0.00
-        #defines the timing of diapause entry of a given super individual
-        self.a7_diapauseentry = 0.00
-        #defines the timing of diapause exit of a given super individual
-        self.a8_diapauseexit = 0.00
+        if genes == None:
+            genes = np.random.rand(8)
 
+        self.genome = dotdict({'a1_bodysize':genes[0],
+                              'a2_irradiancesensitivity':genes[1], #defines the spectral sensitivity of a given super individual
+                              'a3_pred1sensitivity':genes[2], #defines the visual predator sensitivity (i.e., the ability of a super individual to percieve a visual predator in its environment)
+                              'a4_pred1reactivity':genes[3], #defines the reactivity to visual predators
+                              'a5_energyallocation':genes[4], #defines the energy allocation pattern of a given super individual
+                              'a6_diapauseprobability':genes[5], #defines the probability of diapause entry of a given super individual (higher: likely to diapause, lower: less likely to diapause and more likely to develop directly to adulthood)
+                              'a7_diapauseentry':genes[6], #defines the timing of diapause entry of a given super individual
+                              'a8_diapauseexit':genes[7]}) #defines the timing of diapause exit of a given super individual}
+
+        # The thresholds for mutation/crossover of genes during reproduction
+        self.cxthreshold = cxthreshold        
+        self.muthreshold = muthreshold
+
+        # Its alive to start with
         self.alive = True
 
         # Environment variables
-        self.mld = None
-        self.temperature = None # These are 1-D for the complete water column so it can be used for vertical migration
-        self.pred1dens = None
-        #this estimates the normalized and range-scaled (0.1-0.9) ambient shortwave irradiance for the calculation of light dependence of the visual predation risk
-        self.pred1lightdep = None
-        self.irradiance = None
+        self.environment = environment
+        self.environment_index = environment_index
+        #this estimates the normalized and range-scaled 0.1-0.9) ambient shortwave irradiance for the calculation of light dependence of the visual predation risk
         self.zidx = None
         self.zpos = None
-        self.food1concentration = None
 
         self.time = 0 # For logging
 
         # Run variables
         self.modelres = 6
 
-        # Data logging on or off
-        self.datalogger = False
-
-    def update_mld(self):
-       if currentsmld > ndepth:
-           currentsmld = ndepth
-
+        # Data logging only happens if a logger object is passed to the individual
+        self.datalogger = datalogger
 
     def update_vert(self):
-        self.zidx = np.argmin(abs(depthgrade - self.zpos))
+        self.zidx = np.argmin(abs(self.global_settings['depthrange'] - self.zpos))
 
-    @cached_property
     def temperature_zi(self):
-        return self.temperature[self.zidx]
+        return self.environment.temperature[self.environment_index, self.zidx]
+
+    def food1concentration_zi(self):
+        return self.environment.food1concentration[self.environment_index, self.zidx]
+
+    def pred1dens_zi(self):
+        return self.environment.pred1dens[self.environment_index, self.zidx]
+
+    def pred1lightdep_zi(self):
+        return self.environment.pred1lightdep[self.environment_index, self.zidx]
 
     def update_lifestage(self):
         #the growth & development, survival and reproductive simulation happens within this if() condition based on developmental stage
@@ -160,14 +167,19 @@ class superindividual(object):
             self.stage_lt_2()
             
         elif self.developmentalstage >= 3 and self.developmentalstage < 10:
-            self.stage_3_9()            
+            self.stage_3_9()
 
         elif self.developmentalstage == 10 or self.developmentalstage == 11:
             self.stage_10_11()
 
         else:
             self.stage_12_13()
-            
+   
+        # Spatial logging is done at the coupler level as it is different depending on the domain      
+        """
+        if self.datalogger is not None:
+            self.datalogger.log_spatial()
+        """
         #post-developmental-stage processing
         #___________________________________
 
@@ -175,9 +187,8 @@ class superindividual(object):
         #all state variables, gene values, loggers etc. are reset for a new super individual to take its place (these do not need to be re-initialized at seeding/spawning; only the 'gene' values do)
 
         if self.nvindividuals <= 0 or self.age >= self.global_settings['ageceiling'] or self.totalfecundity >= self.global_settings['fecundityceiling']: #!!!!! This should be done by the subpopulation
-            print('DEATH !!!!!!!!!!!!!!!!!!!')
+            #print('DEATH !!!!!!!!!!!!!!!!!!!')
             self.lifestatus = 0
-            #DEATH!!!!!! - Should maybe happen at subpopulation level
 
 
 
@@ -194,12 +205,12 @@ class superindividual(object):
         
         #nb:the mixed layer depth data are in np.float32 type, which needs to be converted to integers before proceeding further
         #calls the vertical migration estimator function of the developmental stage category 1 (dsc1: egg, NI, NII)
-        self.zpos, self.zidx = vm.verticalmigration_dsc1(smld = self.mld)
+        self.zpos, self.zidx = vm.verticalmigration_dsc1(smld = self.environment.mld[self.environment_index])
 
         #dsc-I:growth and development submodel
         #-------------------------------------
         #update the current thermal history (this is an arithmetic mean)
-        currentthermalhistory = (self.thermalhistory + self.temperature_zi) / 2.00 #!!!!!!!!!!!!!!
+        currentthermalhistory = (self.thermalhistory + self.temperature_zi()) / 2.00 #!!!!!!!!!!!!!!
 
         #this is the parameter "a" in Belehrádek’s (1935) temperature function, adopted from Campbel et al. (2001), see: https://doi.org/10.3354/meps221161
         currentdevelopmentalcoefficient = self.global_settings['developmentalcoefficient'][self.developmentalstage]
@@ -209,7 +220,7 @@ class superindividual(object):
         #call the growth and development function for the dsc#1, which returns two outputs
         #output units: 6h pings for developmental time; 6h estimate for growth rate - but it is negative, signifying degrowth
         #nb:this degrowth rate is reduced the basal metabolic rate (= total metabolic rate at dsc-I)
-        currentdevelopmentaltime, currentgrowthrate = gd.growthanddevelopment_dsc1(temperature = self.temperature_zi,
+        currentdevelopmentaltime, currentgrowthrate = gd.growthanddevelopment_dsc1(temperature = self.temperature_zi(),
                                                                                 devcoef = currentdevelopmentalcoefficient,
                                                                                 thist = currentthermalhistory,
                                                                                 strmass = self.structuralmass, modelres = self.modelres)
@@ -235,8 +246,8 @@ class superindividual(object):
         currentmortalityrisk = sv.mortalityrisk_dsc1(strmass = self.structuralmass,
                                                     maxstrmass = self.maxstructuralmass,
                                                     devstage = self.developmentalstage,
-                                                    p1dens = self.pred1dens[self.zidx], #this estimates the visual predator density ("pred1dens") as a probability of death 
-                                                    p1lightdp = self.pred1lightdep[self.zidx], #this estimates the normalized and range-scaled (0.1-0.9) ambient shortwave irradiance for the calculation of light dependence of the visual predation risk
+                                                    p1dens = self.pred1dens_zi(), #this estimates the visual predator density ("pred1dens") as a probability of death 
+                                                    p1lightdp = self.pred1lightdep_zi(), #this estimates the normalized and range-scaled (0.1-0.9) ambient shortwave irradiance for the calculation of light dependence of the visual predation risk
                                                     p2risk = self.global_settings['pred2risk'],
                                                     bgmrisk = self.global_settings['bgmortalityrisk'])
         #the total mortality risk translates to the death of virtual individuals contained in a given super individual
@@ -263,14 +274,14 @@ class superindividual(object):
         #evolvable attribute ('gene') values and the above environmental data ranges are inputs to the modular function for vertical position estimation
         #calling the vertical position estimation function from the module
         #nb:this outputs four integers: (i) absolute vertical position and (ii) relative vertical position (index), (iii) maximum vertical search distance and (iv) actual vertical search distance
-        self.zpos, self.zidx, self.maxzdistance, self.actualzdistance = vm.verticalmigration_dsc2(temprange = self.temperature,
-                                                                                                        f1conrange = self.food1concentration,
-                                                                                                        iradrange = self.irradiance,
+        self.zpos, self.zidx, self.maxzdistance, self.actualzdistance = vm.verticalmigration_dsc2(temprange = self.environment.temperature[self.environment_index, :],
+                                                                                                        f1conrange = self.environment.food1concentration[self.environment_index, :],
+                                                                                                        iradrange = self.environment.irradiance[self.environment_index,:],
                                                                                                         maxirad = self.global_settings['maxirradiance'],
-                                                                                                        p1dnsrange= self.pred1dens,
-                                                                                                        a2 = self.a2_irradiancesensitivity,
-                                                                                                        a3 = self.a3_pred1sensitivity,
-                                                                                                        a4 = self.a4_pred1reactivity,
+                                                                                                        p1dnsrange = self.environment.pred1dens[self.environment_index,:],
+                                                                                                        a2 = self.genome.a2_irradiancesensitivity,
+                                                                                                        a3 = self.genome.a3_pred1sensitivity,
+                                                                                                        a4 = self.genome.a4_pred1reactivity,
                                                                                                         pvp = self.zpos,
                                                                                                         pvi = self.zidx,
                                                                                                         strmass = self.structuralmass,
@@ -281,8 +292,8 @@ class superindividual(object):
         #this function estimates the somatic growth rate, which is used in the calculation of development rate (= 1 / developmental time)
         #only somatic growth (structural growth) occurs at this stage, no energy reserves are maintained
         #the function takes ambient temperature and food concentration as environmental inputs and current structural mass and developmental stage as internal state inputs
-        currentgrowthrate = gd.growthanddevelopment_dsc2(temperature = self.temperature[self.zidx],
-                                                        f1con = self.food1concentration[self.zidx],
+        currentgrowthrate = gd.growthanddevelopment_dsc2(temperature = self.temperature_zi(),
+                                                        f1con = self.food1concentration_zi(),
                                                         strmass = self.structuralmass,
                                                         maxzd = self.maxzdistance,
                                                         actzd = self.actualzdistance,
@@ -308,7 +319,7 @@ class superindividual(object):
         #to estimate the molting state (i.e., whether a super individual is ready to molt to the next stage or not) of a super individual, the stage- and super-individual-specific critical molting mass is required
         #this is defined by the environment (lower and upper bounds of critical molting masses) and the trajectory is defined by the body size attribute (a1)
         #this estimates the stage-specific critical molting mass based on the 'gene' a1:
-        currentcmm = self.global_settings['cmm_lower'][self.developmentalstage] + (self.global_settings['cmm_upper'][self.developmentalstage] - self.global_settings['cmm_lower'][self.developmentalstage]) * self.a1_bodysize
+        currentcmm = self.global_settings['cmm_lower'][self.developmentalstage] + (self.global_settings['cmm_upper'][self.developmentalstage] - self.global_settings['cmm_lower'][self.developmentalstage]) * self.genome.a1_bodysize
 
         #molting from developmental stage 'd'to 'd + 1' occurs only if the current structural mass exceeds the stage-specific critical molting mass
         #the else condition is not mentioned here, as no stage increment occurs if the if() condition is invalid
@@ -320,7 +331,7 @@ class superindividual(object):
         #dsc-II: survival submodel
         #-------------------------
         #this uses a modular function to estimate the total mortality risk faced by the super individual (as a probability of death)
-        currentmortalityrisk = sv.mortalityrisk_dsc2(strmass = self.structuralmass, maxstrmass = self.maxstructuralmass, p1dens = self.pred1dens[self.zidx], p1lightdp = self.pred1lightdep[self.zidx], p2risk = self.global_settings['pred2risk'], bgmrisk = self.global_settings['bgmortalityrisk'])
+        currentmortalityrisk = sv.mortalityrisk_dsc2(strmass = self.structuralmass, maxstrmass = self.maxstructuralmass, p1dens = self.pred1dens_zi(), p1lightdp = self.pred1lightdep_zi(), p2risk = self.global_settings['pred2risk'], bgmrisk = self.global_settings['bgmortalityrisk'])
 
         #the total mortality risk translates to the death of virtual individuals contained in a given super individual
         #when all virtual individuals contained in a super individual dies, then the super individual also dies
@@ -344,7 +355,7 @@ class superindividual(object):
             #random number for diapause strategy determination
             dsdet = np.random.rand(1).squeeze()
             #falls into 0 (direct development, no diapause) or 1 (diapause) depending on the diapause probability 'gene' value
-            self.diapausestrategy = 1 if dsdet < self.a6_diapauseprobability else 0
+            self.diapausestrategy = 1 if dsdet < self.genome.a6_diapauseprobability else 0
         #end if
 
         #this splits the dsc-III into subcategory-specific processing drives
@@ -359,11 +370,6 @@ class superindividual(object):
             self.diapauseX()
         elif self.diapausestate == "P":
             self.diapauseP()
-        #end if
-
-        if self.datalogger:
-            self.data_logger_spatial()
-
         #end if
 
     #simulation of growth, development and survival of adult male and female stages (CVI-F, CVI-M): dsc-IV
@@ -394,14 +400,14 @@ class superindividual(object):
         #evolvable attribute ('gene') values and the above environmental data ranges are inputs to the modular function for vertical position estimation
         #calling the vertical position estimation function from the module
         #nb:this outputs four integers: (i) absolute vertical position and (ii) relative vertical position (index), (iii) maximum vertical search distance and (iv) actual vertical search distance
-        self.zpos, self.zidx, self.maxzdistance, self.actualzdistance = vm.verticalmigration_dsc4(temprange = self.temperature,
-                                                                                                        f1conrange = self.food1concentration,
-                                                                                                        iradrange = self.irradiance,
+        self.zpos, self.zidx, self.maxzdistance, self.actualzdistance = vm.verticalmigration_dsc4(temprange = self.environment.temperature[self.environment_index, :],
+                                                                                                        f1conrange = self.environment.food1concentration[self.environment_index, :],
+                                                                                                        iradrange = self.environment.irradiance[self.environment_index,:],
                                                                                                         maxirad = self.global_settings['maxirradiance'],
-                                                                                                        p1dnsrange= self.pred1dens,
-                                                                                                        a2 = self.a2_irradiancesensitivity,
-                                                                                                        a3 = self.a3_pred1sensitivity,
-                                                                                                        a4 = self.a4_pred1reactivity,
+                                                                                                        p1dnsrange = self.environment.pred1dens[self.environment_index,:],
+                                                                                                        a2 = self.genome.a2_irradiancesensitivity,
+                                                                                                        a3 = self.genome.a3_pred1sensitivity,
+                                                                                                        a4 = self.genome.a4_pred1reactivity,
                                                                                                         pvp = self.zpos,
                                                                                                         pvi = self.zidx,
                                                                                                         strmass = self.structuralmass,
@@ -419,8 +425,8 @@ class superindividual(object):
             #this function estimates the somatic growth rate and developmental rates (development is a function of growth - stage progression is coded below)
             #the function takes ambient temperature and food concentration as environmental inputs and current structural & reserve masses as internal state inputs
             #this is female-specific (growth/degrowth both possible)
-            currentgrowthrate = gd.growthanddevelopment_dsc4f(temperature = self.temperature[self.zidx],
-                                                            f1con = self.food1concentration[self.zidx],
+            currentgrowthrate = gd.growthanddevelopment_dsc4f(temperature = self.temperature_zi(),
+                                                            f1con = self.food1concentration_zi(),
                                                             strmass = self.structuralmass,
                                                             resmass = self.reservemass,
                                                             maxzd = self.maxzdistance,
@@ -432,8 +438,8 @@ class superindividual(object):
             #this function estimates the somatic growth rate and developmental rates (development is a function of growth - stage progression is coded below)
             #the function takes ambient temperature and food concentration as environmental inputs and current structural & reserve masses as internal state inputs
             #this is male-specific (degrowth is only possible)
-            currentgrowthrate = gd.growthanddevelopment_dsc4m(temperature = self.temperature[self.zidx],
-                                                            f1con = self.food1concentration[self.zidx],
+            currentgrowthrate = gd.growthanddevelopment_dsc4m(temperature = self.temperature_zi(),
+                                                            f1con = self.food1concentration_zi(),
                                                             strmass = self.structuralmass,
                                                             resmass = self.reservemass,
                                                             maxzd = self.maxzdistance,
@@ -470,13 +476,13 @@ class superindividual(object):
             #in case of past degrowth, the female channels 50% of the surplus energy for structural growth and 50% to egg production (a sensible estimate)
 
             #this is defined by the environment (lower and upper bounds of critical molting masses) and the trajectory is defined by the body size attribute (a1)
-            currentadultsize = self.global_settings['cmm_lower'][12] + (self.global_settings['cmm_upper'][12] - self.global_settings['cmm_lower'][12]) * self.a1_bodysize
+            self.adultsize = self.global_settings['cmm_lower'][12] + (self.global_settings['cmm_upper'][12] - self.global_settings['cmm_lower'][12]) * self.genome.a1_bodysize
 
             if currentgrowthrate >= 0.00:
 
                 #here, the growth rate is positive (i.e., there is surplus assimilation)
                 #surplus assimilation is fully or partly channeled to reproductive output
-                if self.structuralmass >= currentadultsize:
+                if self.structuralmass >= self.adultsize:
 
                     #in this case, the female is healthy (i.e., havent sustained structural degrowth)
                     #surplus assimilation is fully allocated to reproductive output (this can be fitted with a conversion factor, which is ca. 80% in some models)
@@ -530,7 +536,7 @@ class superindividual(object):
         # occurs outside of the individual class and the genome is copied into the individual so the male finding
         #code is removed and if there is a near male its genome is in self.malegenome (otherwise it is None)
 
-        if self.sex == "F" and self.inseminationstate == 1:
+        if self.sex == "F":
             if self.inseminationstate == 0 and self.malegenome is not None:
                 self.inseminationstate = 1      
  
@@ -557,8 +563,8 @@ class superindividual(object):
         currentmortalityrisk = sv.mortalityrisk_dsc4(strmass = self.structuralmass,
                                                     maxstrmass = self.maxstructuralmass,
                                                     resmass = self.reservemass,
-                                                    p1dens = self.pred1dens[self.zidx],
-                                                    p1lightdp = self.pred1lightdep[self.zidx],
+                                                    p1dens = self.pred1dens_zi(),
+                                                    p1lightdp = self.pred1lightdep_zi(),
                                                     p2risk = self.global_settings['pred2risk'],
                                                     bgmrisk = self.global_settings['bgmortalityrisk'])
 
@@ -578,14 +584,14 @@ class superindividual(object):
         #evolvable attribute ('gene') values and the above environmental data ranges are inputs to the modular function for vertical position estimation
         #calling the vertical position estimation function from the module
         #nb:this outputs four integers: (i) absolute vertical position and (ii) relative vertical position (index), (iii) maximum vertical search distance and (iv) actual vertical search distance
-        self.zpos, self.zidx, self.maxzdistance, self.actualzdistance = vm.verticalmigration_dsc3a(temprange = self.temperature,
-                                                                                                        f1conrange = self.food1concentration,
-                                                                                                        iradrange = self.irradiance,
+        self.zpos, self.zidx, self.maxzdistance, self.actualzdistance = vm.verticalmigration_dsc3a(temprange = self.environment.temperature[self.environment_index,:],
+                                                                                                        f1conrange = self.environment.food1concentration[self.environment_index,:],
+                                                                                                        iradrange = self.environment.irradiance[self.environment_index,:],
                                                                                                         maxirad = self.global_settings['maxirradiance'],
-                                                                                                        p1dnsrange = self.pred1dens,
-                                                                                                        a2 = self.a2_irradiancesensitivity,
-                                                                                                        a3 = self.a3_pred1sensitivity,
-                                                                                                        a4 = self.a4_pred1reactivity,
+                                                                                                        p1dnsrange = self.environment.pred1dens[self.environment_index,:],
+                                                                                                        a2 = self.genome.a2_irradiancesensitivity,
+                                                                                                        a3 = self.genome.a3_pred1sensitivity,
+                                                                                                        a4 = self.genome.a4_pred1reactivity,
                                                                                                         pvp = self.zpos,
                                                                                                         pvi = self.zidx,
                                                                                                         strmass = self.structuralmass,
@@ -597,8 +603,8 @@ class superindividual(object):
         #extraction of apropriate environmental variables based on the current zidx
         #this function estimates the somatic growth rate, which is used in calculating the development rate (= 1 / development time)
         #the function takes ambient temperature and food concentration as environmental inputs and current structural & reserve masses as internal state inputs
-        currentgrowthrate = gd.growthanddevelopment_dsc3a(temperature = self.temperature[self.zidx],
-                                                        f1con = self.food1concentration[self.zidx],
+        currentgrowthrate = gd.growthanddevelopment_dsc3a(temperature = self.temperature_zi(),
+                                                        f1con = self.food1concentration_zi(),
                                                         strmass = self.structuralmass,
                                                         resmass = self.reservemass,
                                                         maxzd = self.maxzdistance,
@@ -612,7 +618,7 @@ class superindividual(object):
         #to estimate the molting state of a super individual (i.e., whether a super individual is ready to molt to the next stage or not), the stage- and super-individual-specific critical molting mass is required
         #this is defined by the environment (lower and upper bounds of critical molting masses) and the trajectory is defined by the body size attribute (a1)
         #the index position 11 is the CV->CVI(M/F) molting mass, which is the maximum structural mass reachaable by a super individual in a given environment and given 'gene' value of "a1_bodysize"
-        currentadultsize = self.global_settings['cmm_lower'][11] + (self.global_settings['cmm_upper'][11] - self.global_settings['cmm_lower'][11]) * self.a1_bodysize
+        self.adultsize = self.global_settings['cmm_lower'][11] + (self.global_settings['cmm_upper'][11] - self.global_settings['cmm_lower'][11]) * self.genome.a1_bodysize
 
         #based on the growth rate, this updates the structuralmass and energy reserve mass
         #however, the surplus assimilation allocation patterns for somatic growth & reserve buildup are markedly different for directly developing super individuals and diapausing individuals
@@ -645,10 +651,10 @@ class superindividual(object):
 
                     #this allocates the surplus assimilation to both structural (somatic) growth and reserve build up based on proportions defined by the 'gene' "a5_energyallocation"
                     #here, a fraction defined by the evolvable dynamic attribute "a5_energyallocation" is channeled to structural growth
-                    self.structuralmass = self.structuralmass + currentgrowthrate * (1.00 - self.a5_energyallocation)
+                    self.structuralmass = self.structuralmass + currentgrowthrate * (1.00 - self.genome.a5_energyallocation)
                     #the rest is channel to reserve build up
                     #nb:here, there is no explicit reserve mass limitation applied, but self-limitation occur at the diapause entry condition, which has a reservemass/structuralmass ceiling of 1.00
-                    self.reservemass = self.reservemass + currentgrowthrate * self.a5_energyallocation
+                    self.reservemass = self.reservemass + currentgrowthrate * self.genome.a5_energyallocation
 
                 #end if
             #end if
@@ -675,7 +681,7 @@ class superindividual(object):
         #the development rate or development time is a function of growth rate calculated by the modular function above
         #to estimate the molting state (i.e., whether a super individual is ready to molt to the next stage or not) of a super individual, the stage- and super-individual-specific critical molting mass is required
         #this is defined by the environment (lower and upper bounds of critical molting masses) and the trajectory is defined by the body size attribute (a1)
-        currentcmm = self.global_settings['cmm_lower'][self.developmentalstage] + (self.global_settings['cmm_upper'][self.developmentalstage] - self.global_settings['cmm_lower'][self.developmentalstage]) * self.a1_bodysize
+        currentcmm = self.global_settings['cmm_lower'][self.developmentalstage] + (self.global_settings['cmm_upper'][self.developmentalstage] - self.global_settings['cmm_lower'][self.developmentalstage]) * self.genome.a1_bodysize
         #molting from developmental stage 'd'to 'd + 1' occurs only if the current structural mass exceeds the stage-specific critical molting mass
 
         if self.diapausestrategy == 0:
@@ -694,8 +700,10 @@ class superindividual(object):
 
                 #data logging
                 #------------
-                if self.datalogger:
-                    self.log_data()
+                if self.datalogger is not None:
+                    self.datalogger.add_lifecycle_i(self.nvindividuals, 0)
+                    self.datalogger.add_lifcycle_f((self.structuralmass * self.tnvindividuals) / 1e6, 0)
+                    self.datalogger.add_lifcycle_f((self.structuralmass * self.nvindividuals) / 1e6, 1)
 
                 #end if
 
@@ -737,8 +745,8 @@ class superindividual(object):
         currentmortalityrisk = sv.mortalityrisk_dsc3a(strmass = self.structuralmass,
                                                     maxstrmass = self.maxstructuralmass,
                                                     resmass = self.reservemass,
-                                                    p1dens = self.pred1dens[self.zidx],
-                                                    p1lightdp = self.pred1lightdep[self.zidx],
+                                                    p1dens = self.pred1dens_zi(),
+                                                    p1lightdp = self.pred1lightdep_zi(),
                                                     p2risk = self.global_settings['pred2risk'],
                                                     bgmrisk = self.global_settings['bgmortalityrisk'])
 
@@ -767,7 +775,7 @@ class superindividual(object):
         #the potential degrowth and/or reserve utilization is therefore, depndent on the ambient temperature and the total bodymass of the super individual
 
         #this uses a modular function to estimate the potential degrowth and/or reserve utilization of super individuals
-        currentgrowthrate = gd.growthanddevelopment_dsc3e(temperature = self.temperature[self.zidx],
+        currentgrowthrate = gd.growthanddevelopment_dsc3e(temperature = self.temperature_zi(),
                                                         strmass = self.structuralmass,
                                                         resmass = self.reservemass,
                                                         actzd = self.actualzdistance,
@@ -795,8 +803,8 @@ class superindividual(object):
         currentmortalityrisk = sv.mortalityrisk_dsc3e(strmass = self.structuralmass,
                                                     maxstrmass = self.maxstructuralmass,
                                                     resmass = self.reservemass,
-                                                    p1dens = self.pred1dens[self.zidx],
-                                                    p1lightdp = self.pred1lightdep[self.zidx],
+                                                    p1dens = self.pred1dens_zi(),
+                                                    p1lightdp = self.pred1lightdep_zi(),
                                                     p2risk = self.global_settings['pred2risk'],
                                                     bgmrisk = self.global_settings['bgmortalityrisk'])
 
@@ -819,7 +827,7 @@ class superindividual(object):
         #the potential degrowth and/or reserve utilization are depndent on the ambient temperature and the total bodymass of the super individual
 
         #this uses a modular function to estimate the potential degrowth and/or reserve utilization of super individuals
-        currentgrowthrate = gd.growthanddevelopment_dsc3d(temperature = self.temperature[self.zidx],
+        currentgrowthrate = gd.growthanddevelopment_dsc3d(temperature = self.temperature_zi(),
                                                         strmass = self.structuralmass,
                                                         resmass = self.reservemass,
                                                         modelres = self.modelres)
@@ -847,7 +855,7 @@ class superindividual(object):
 
         else:
 
-            if 1.00 - self.reservemass / self.reservemassatdiapauseentry >= self.a8_diapauseexit:
+            if 1.00 - self.reservemass / self.reservemassatdiapauseentry >= self.genome.a8_diapauseexit:
 
                 #the diapsue state changes to diapause exit or "X"
                 self.diapausestate = "X"
@@ -865,8 +873,8 @@ class superindividual(object):
         self.mortalityrisk = sv.mortalityrisk_dsc3d(strmass = self.structuralmass,
                                                     maxstrmass = self.maxstructuralmass,
                                                     resmass = self.reservemass,
-                                                    p1dens = self.pred1dens[self.zidx],
-                                                    p1lightdp = self.pred1lightdep[self.zidx],
+                                                    p1dens = self.pred1dens_zi(),
+                                                    p1lightdp = self.pred1lightdep_zi(),
                                                     p2risk = self.global_settings['pred2risk'],
                                                     bgmrisk = self.global_settings['bgmortalityrisk'])
 
@@ -896,7 +904,7 @@ class superindividual(object):
         #the potential degrowth and/or reserve utilization is therefore, depndent on the ambient temperature and the total bodymass of the super individual
 
         #this uses a modular function to estimate the potential degrowth and/or reserve utilization of super individuals
-        currentgrowthrate = gd.growthanddevelopment_dsc3x(temperature = self.temperature[self.zidx],
+        currentgrowthrate = gd.growthanddevelopment_dsc3x(temperature = self.temperature_zi(),
                                                         strmass = self.structuralmass,
                                                         resmass = self.reservemass,
                                                         actzd = self.actualzdistance,
@@ -921,9 +929,15 @@ class superindividual(object):
 
             #data logging
             #------------
-            if self.datalogger:
-                self.log_data()
-            #end if
+            if self.datalogger is not None:
+                if self.developmentalstage == 10:
+                    #for civ diapause-exits
+                    self.datalogger.add_lifecycle_i(self.nvindividuals,3)
+                    self.datalogger.add_lifecycle_f((self.reservemass * self.nvindividuals) / 1e6, 6)
+                elif self.developmentalstage == 11:
+                    #for cv diapause-exits
+                    self.datalogger.add_lifecycle_i(self.nvindividuals,4)
+                    self.datalogger.add_lifecycle_f((self.reservemass * self.nvindividuals) / 1e6, 7)
 
         #end if
 
@@ -933,8 +947,8 @@ class superindividual(object):
         currentmortalityrisk = sv.mortalityrisk_dsc3x(strmass = self.structuralmass,
                                                     maxstrmass = self.maxstructuralmass,
                                                     resmass = self.reservemass,
-                                                    p1dens = self.pred1dens[self.zidx],
-                                                    p1lightdp = self.pred1lightdep[self.zidx],
+                                                    p1dens = self.pred1dens_zi(),
+                                                    p1lightdp = self.pred1lightdep_zi(),
                                                     p2risk = self.global_settings['pred2risk'],
                                                     bgmrisk = self.global_settings['bgmortalityrisk'])
 
@@ -958,14 +972,15 @@ class superindividual(object):
         #evolvable attribute ('gene') values and the above environmental data ranges are inputs to the modular function for vertical position estimation
         #calling the vertical position estimation function from the module
         #nb:this outputs four integers: (i) absolute vertical position and (ii) relative vertical position (index), (iii) maximum vertical search distance and (iv) actual vertical search distance
-        self.zpos, self.zidx, self.maxzdistance, self.actualzdistance = vm.verticalmigration_dsc3p(temprange = self.temperature,
-                                                                                                        f1conrange = self.food1concentration,
-                                                                                                        iradrange = self.irradiance,
+        self.update
+        self.zpos, self.zidx, self.maxzdistance, self.actualzdistance = vm.verticalmigration_dsc3p(temprange = self.environment.temperature[self.environment_index, :],
+                                                                                                        f1conrange = self.environment.food1concentration[self.environment_index, :],
+                                                                                                        iradrange = self.environment.irradiance[self.environment_index,:],
                                                                                                         maxirad = self.global_settings['maxirradiance'],
-                                                                                                        p1dnsrange= self.pred1dens,
-                                                                                                        a2 = self.a2_irradiancesensitivity,
-                                                                                                        a3 = self.a3_pred1sensitivity,
-                                                                                                        a4 = self.a4_pred1reactivity,
+                                                                                                        p1dnsrange = self.environment.pred1dens[self.environment_index,:],
+                                                                                                        a2 = self.genome.a2_irradiancesensitivity,
+                                                                                                        a3 = self.genome.a3_pred1sensitivity,
+                                                                                                        a4 = self.genome.a4_pred1reactivity,
                                                                                                         pvp = self.zpos,
                                                                                                         pvi = self.zidx,
                                                                                                         strmass = self.structuralmass,
@@ -976,8 +991,8 @@ class superindividual(object):
         #-----------------------------------------
         #this function estimates the somatic growth rate and developmental rates (development is a function of growth - stage progression is coded below)
         #the function takes ambient temperature and food concentration as environmental inputs and current structural & reserve masses as internal state inputs
-        currentgrowthrate = gd.growthanddevelopment_dsc3p(temperature = self.temperature[self.zidx],
-                                                        f1con = self.food1concentration[self.zidx],
+        currentgrowthrate = gd.growthanddevelopment_dsc3p(temperature = self.temperature_zi(),
+                                                        f1con = self.food1concentration_zi(),
                                                         strmass = self.structuralmass,
                                                         resmass = self.reservemass,
                                                         maxzd = self.maxzdistance,
@@ -997,7 +1012,7 @@ class superindividual(object):
 
         #the developmental stage advancement can be from civ-cv and cv-cvi(F/M) depending on the diapause stage
         #to estimate the molting state (i.e., whether a super individual is ready to molt to the next stage or not) of a super individual, the stage- and super-individual-specific critical molting mass is required
-        currentcmm = self.global_settings['cmm_lower'][self.developmentalstage] + (self.global_settings['cmm_upper'][self.developmentalstage] - self.global_settings['cmm_lower'][self.developmentalstage]) * self.a1_bodysize
+        currentcmm = self.global_settings['cmm_lower'][self.developmentalstage] + (self.global_settings['cmm_upper'][self.developmentalstage] - self.global_settings['cmm_lower'][self.developmentalstage]) * self.genome.a1_bodysize
 
         #molting from developmental stage 'd'to 'd + 1' occurs only if the current structural mass exceeds the stage-specific critical molting mass
         #the else condition is not mentioned here, as no stage increment occurs if the if() condition is invalid
@@ -1015,8 +1030,8 @@ class superindividual(object):
         currentmortalityrisk = sv.mortalityrisk_dsc3p(strmass = self.structuralmass,
                                                     maxstrmass = self.maxstructuralmass,
                                                     resmass = self.reservemass,
-                                                    p1dens = self.pred1dens[self.zidx],
-                                                    p1lightdp = self.pred1lightdep[self.zidx],
+                                                    p1dens = self.pred1dens_zi(),
+                                                    p1lightdp = self.pred1lightdep_zi(),
                                                     p2risk = self.global_settings['pred2risk'],
                                                     bgmrisk = self.global_settings['bgmortalityrisk'])
 
@@ -1026,14 +1041,16 @@ class superindividual(object):
         self.nvindividuals = self.nvindividuals - int(self.nvindividuals * currentmortalityrisk)
 
     def check_diapauseentry(self):
-        if self.reservemass / self.structuralmass >= self.a7_diapauseentry:
+        if self.reservemass / self.structuralmass >= self.genome.a7_diapauseentry:
             #if this condition is satisfied, the super individual is in the "diapause entry mode" ("E")
             self.diapausestate = "E"
 
             #data logging
             #------------
-            if self.datalogger:
-                self.log_data()
+            if self.datalogger is not None:
+                self.datalogger.add_lifecycle_i(self.nvindividuals, 2)
+                self.datalogger.add_lifcycle_f((self.structuralmass * self.nvindividuals) / 1e6, 4)
+                self.datalogger.add_lifcycle_f((self.structuralmass * self.nvindividuals) / 1e6, 5)
 
 
     def update_mass(self, currentgrowthrate): 
@@ -1057,27 +1074,39 @@ class superindividual(object):
             #no change to the reserve mass
             self.structuralmass = self.structuralmass + currentgrowthrate
 
+    def get_child_genome(self):
+        spawning_f = self.genome
+        spawning_m = self.malegenome
+        spawning_n = {}
+        for attr_name in spawning_f.keys():
+            #this is the crossover probability per-gene (if this value is lower than crossover threshold, then crossover occurs)
+            cxprob = np.random.rand(1).squeeze()
+            #this is mutation probability per-gene (if this value is lower than the mutation threshold, then mutation occurs)
+            muprob = np.random.rand(1).squeeze()
+            #this is the blend value per-gene in BLX-alpha algorithm
+            #nb: see Tkahashi et al, (2001) 10.1109/CEC.2001.934452
+            cxval = np.random.rand(1).squeeze()
 
-    def log_data(self):
-        if currentdevelopmentalstage == 10:
+            #crossover algorithm (BLX-alpha)
+            if cxprob < self.cxthreshold:
+                #if the crossover threshold is met, then male and female genomes are blended with BLX-alpha crossover 
+                spawning_n[attr_name] = (cxval * spawning_f[attr_name]) + ((1.00 - cxval) * spawning_m[attr_name])
+            else:
+                #otherwise, the female genome is inherited without blending
+                spawning_n[attr_name] = spawning_f[attr_name]
+            #end if
+            #mutation algorithm (random replacement)
+            #nb:the <else> condition is not written because, no mutation does not change the genome 
+            if muprob < self.muthreshold:
+                spawning_n[attr_name] = np.random.rand(1)[0]
 
-            #for civ diapause-exits
-            lcstrategies_i[currenttime, 3] += currentnvindividuals
-            lcstrategies_f[currenttime, 6] += (currentreservemass * currentnvindividuals) / 1e6
+        return spawning_n
 
-        elif currentdevelopmentalstage == 11:
+    def get_spatial_log_data(self):
+        if self.developmentalstage == 12 and self.sex == 'M':
+            col = 13
+        else:
+            col = self.developmentalstage
 
-            #for cv diapause-exits
-            lcstrategies_i[currenttime, 4] += currentnvindividuals
-            lcstrategies_f[currenttime, 7] += (currentreservemass * currentnvindividuals) / 1e6
-
-
-
-    def log_data_spatial(self):
-        spatialdistribution_ps[currentdevelopmentalstage, currentxidx, currentyidx, currentzidx, currenttime] += 1
-        #logging biomass (gC) by sequential addition
-        #nb:indexing done as: <stage.s> <longitude.x> <latitude.y> <depth.z> <time.t>
-        #nb:reserve-driven biomass can be logged separately if need be
-        currenttotalmass = ((currentstructuralmass + currentreservemass) * currentnvindividuals) / 1e6
-        spatialdistribution_bm[currentdevelopmentalstage, currentxidx, currentyidx, currentzidx, currenttime] += currenttotalmass
-
+        return [col, self.environment.x[self.environment_index], self.environment.y[self.environment_index], self.zidx, self.nvindividuals, self.structuralmass + self.reservemass] #Check this is the correct Z
+    
