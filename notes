@@ -1,0 +1,23 @@
+
+TO DO:
+
+change variable names to opendrift compatable
+
+
+
+- If a female produces multiple eggs do they all receive the same genes or should the randomisation occur for each egg
+
+- nspawns/nseeds logic a bit weird in some edgecases (nspaces < nseeds, nspawns = 0)
+
+
+- Why when I run the old code are the numbers dieing weird
+
+
+
+
+- Should we run with depth averaged currents or update the zpos in the particle tracking from the individual
+- the output grid at the moment assumes a list of coordinates but also a fixed resolution
+- update age should probably not happen in the diapause sub functions
+- update time_ind probably should happen in the simulation base class
+- depthgrade - should we reinterpolate model data or use model levels
+

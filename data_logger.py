@@ -37,12 +37,12 @@ class OutputLogger(object):
         if self.min_lon == self.max_lon:
             self.lon_res = 1
         else:
-            self.lon_res = self.max_lon - self.min_lon
+            self.lon_res = self.output_grid['lon'][1] - self.output_grid['lon'][0]
 
         if self.min_lat == self.max_lat:
             self.lat_res = 1
         else:
-            self.lat_res = self.max_lat - self.min_lat
+            self.lat_res = self.output_grid['lat'][1] - self.output_grid['lat'][0]
 
     # This doesn't feel very pythonesque
     def add_lifecycle_i(self, val, col, timestep):
@@ -51,11 +51,9 @@ class OutputLogger(object):
     def add_lifecyle_f(self, val, col, timestep):
         self.lifecycle_f[timestep, col] += val
 
-    def log_spatial(self, superindividuals):
+    def log_spatial(self, cxyz, pop_size_individual, biomass_individual):
         # This is done at the coupler level as it varies based on the forcing (1-D or spatially resolved)
-        active_si = ~np.isin(superindividuals, None)
-        spatial_data = np.asarray([si.get_spatial_log_data() for si in np.asarray(superindividuals)[active_si]]) # The data has columns [col, x, y, z, pop, biomass]
-        pop_size, biomass = (self.resolve_spatial(spatial_data[:,0:4], spatial_data[:,4], spatial_data[:,5]))
+        pop_size, biomass = (self.resolve_spatial(cxyz, pop_size_individual, biomass_individual))
         self.spatial_population_size.append(pop_size) # Should at some point change this to writing to the netcdf at each timestep
         self.spatial_biomass.append(biomass)
 
@@ -72,8 +70,8 @@ class OutputLogger(object):
                 # Pretty sure there is a more efficient version of this but use for now
                 for i, this_d in enumerate(data1):
                     this_cxyz = cxyz[i,...]
-                    lon_ind = int(np.floor(this_cxyz[1] / self.lon_res))
-                    lat_ind = int(np.floor(this_cxyz[2] / self.lat_res))
+                    lon_ind = int(np.floor((this_cxyz[1] - self.min_lon)/ self.lon_res))
+                    lat_ind = int(np.floor((this_cxyz[2] - self.min_lat)/ self.lat_res))
                     gridded_data1[int(this_cxyz[0]), lon_ind, lat_ind, int(this_cxyz[3])] += data1[i]
                     gridded_data2[int(this_cxyz[0]), lon_ind, lat_ind, int(this_cxyz[3])] += data2[i]
 

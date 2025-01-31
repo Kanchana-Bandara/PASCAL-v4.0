@@ -32,7 +32,7 @@ class dotdict(dict):
     __delattr__ = dict.__delitem__
 
 class SuperIndividual(object):
-    def __init__(self, global_settings, diapausedepth, environment, environment_index, eggmass=0.23, nindividuals=10000, genes=None, cxthreshold=0.7, muthreshold=0.2, datalogger=None):
+    def __init__(self, global_settings, diapausedepth, environment, environment_profiles, environment_index, eggmass=0.23, nindividuals=10000, genes=None, cxthreshold=0.7, muthreshold=0.2, datalogger=None):
         #these are reflective of individual states and vary during the lifespan of super individuals depending on the individual-environment interactions and internal processes (e.g., hardcoded strategies)
         self.global_settings = global_settings
         self.eggmass = eggmass
@@ -120,10 +120,16 @@ class SuperIndividual(object):
 
         # Environment variables
         self.environment = environment
+        self.environment_profiles = environment_profiles
         self.environment_index = environment_index
         #this estimates the normalized and range-scaled 0.1-0.9) ambient shortwave irradiance for the calculation of light dependence of the visual predation risk
         self.zidx = None
         self.zpos = None
+
+        if len(self.environment_profiles['z']) != len(self.global_settings['depthrange']): 
+            self.depth_interpolate = True
+        else:
+            self.depth_interpolate = ~(-self.environment_profiles['z'] == self.global_settings['depthrange']).all()
 
         self.time = 0 # For logging
 
@@ -136,17 +142,14 @@ class SuperIndividual(object):
     def update_vert(self):
         self.zidx = np.argmin(abs(self.global_settings['depthrange'] - self.zpos))
 
-    def temperature_zi(self):
-        return self.environment.temperature[self.environment_index, self.zidx]
+    def get_profile(self, var):
+        if self.depth_interpolate:
+            return  np.interp(self.global_settings['depthrange'], -self.environment_profiles['z'], self.environment_profiles[var][:,self.environment_index])
+        else:
+            return self.environment_profiles[var][:, self.environment_index]
 
-    def food1concentration_zi(self):
-        return self.environment.food1concentration[self.environment_index, self.zidx]
-
-    def pred1dens_zi(self):
-        return self.environment.pred1dens[self.environment_index, self.zidx]
-
-    def pred1lightdep_zi(self):
-        return self.environment.pred1lightdep[self.environment_index, self.zidx]
+    def get_zi(self, var):
+        return self.get_profile(var)[self.zidx]
 
     def update_lifestage(self):
         #the growth & development, survival and reproductive simulation happens within this if() condition based on developmental stage
@@ -205,12 +208,12 @@ class SuperIndividual(object):
         
         #nb:the mixed layer depth data are in np.float32 type, which needs to be converted to integers before proceeding further
         #calls the vertical migration estimator function of the developmental stage category 1 (dsc1: egg, NI, NII)
-        self.zpos, self.zidx = vm.verticalmigration_dsc1(smld = self.environment.mld[self.environment_index])
+        self.zpos, self.zidx = vm.verticalmigration_dsc1(smld = self.environment['mld'][self.environment_index])
 
         #dsc-I:growth and development submodel
         #-------------------------------------
         #update the current thermal history (this is an arithmetic mean)
-        currentthermalhistory = (self.thermalhistory + self.temperature_zi()) / 2.00 #!!!!!!!!!!!!!!
+        currentthermalhistory = (self.thermalhistory + self.get_zi('temperature')) / 2.00 #!!!!!!!!!!!!!!
 
         #this is the parameter "a" in Belehrádek’s (1935) temperature function, adopted from Campbel et al. (2001), see: https://doi.org/10.3354/meps221161
         currentdevelopmentalcoefficient = self.global_settings['developmentalcoefficient'][self.developmentalstage]
@@ -220,7 +223,7 @@ class SuperIndividual(object):
         #call the growth and development function for the dsc#1, which returns two outputs
         #output units: 6h pings for developmental time; 6h estimate for growth rate - but it is negative, signifying degrowth
         #nb:this degrowth rate is reduced the basal metabolic rate (= total metabolic rate at dsc-I)
-        currentdevelopmentaltime, currentgrowthrate = gd.growthanddevelopment_dsc1(temperature = self.temperature_zi(),
+        currentdevelopmentaltime, currentgrowthrate = gd.growthanddevelopment_dsc1(temperature = self.get_zi('temperature'),
                                                                                 devcoef = currentdevelopmentalcoefficient,
                                                                                 thist = currentthermalhistory,
                                                                                 strmass = self.structuralmass, modelres = self.modelres)
@@ -246,8 +249,8 @@ class SuperIndividual(object):
         currentmortalityrisk = sv.mortalityrisk_dsc1(strmass = self.structuralmass,
                                                     maxstrmass = self.maxstructuralmass,
                                                     devstage = self.developmentalstage,
-                                                    p1dens = self.pred1dens_zi(), #this estimates the visual predator density ("pred1dens") as a probability of death 
-                                                    p1lightdp = self.pred1lightdep_zi(), #this estimates the normalized and range-scaled (0.1-0.9) ambient shortwave irradiance for the calculation of light dependence of the visual predation risk
+                                                    p1dens = self.get_zi('pred1dens'), #this estimates the visual predator density ("pred1dens") as a probability of death 
+                                                    p1lightdp = self.get_zi('pred1lightdep'), #this estimates the normalized and range-scaled (0.1-0.9) ambient shortwave irradiance for the calculation of light dependence of the visual predation risk
                                                     p2risk = self.global_settings['pred2risk'],
                                                     bgmrisk = self.global_settings['bgmortalityrisk'])
         #the total mortality risk translates to the death of virtual individuals contained in a given super individual
@@ -274,11 +277,11 @@ class SuperIndividual(object):
         #evolvable attribute ('gene') values and the above environmental data ranges are inputs to the modular function for vertical position estimation
         #calling the vertical position estimation function from the module
         #nb:this outputs four integers: (i) absolute vertical position and (ii) relative vertical position (index), (iii) maximum vertical search distance and (iv) actual vertical search distance
-        self.zpos, self.zidx, self.maxzdistance, self.actualzdistance = vm.verticalmigration_dsc2(temprange = self.environment.temperature[self.environment_index, :],
-                                                                                                        f1conrange = self.environment.food1concentration[self.environment_index, :],
-                                                                                                        iradrange = self.environment.irradiance[self.environment_index,:],
+        self.zpos, self.zidx, self.maxzdistance, self.actualzdistance = vm.verticalmigration_dsc2(temprange = self.get_profile('temperature'),
+                                                                                                        f1conrange = self.get_profile('food1concentration'),
+                                                                                                        iradrange = self.get_profile('irradiance'),
                                                                                                         maxirad = self.global_settings['maxirradiance'],
-                                                                                                        p1dnsrange = self.environment.pred1dens[self.environment_index,:],
+                                                                                                        p1dnsrange = self.get_profile('pred1dens'),
                                                                                                         a2 = self.genome.a2_irradiancesensitivity,
                                                                                                         a3 = self.genome.a3_pred1sensitivity,
                                                                                                         a4 = self.genome.a4_pred1reactivity,
@@ -292,8 +295,8 @@ class SuperIndividual(object):
         #this function estimates the somatic growth rate, which is used in the calculation of development rate (= 1 / developmental time)
         #only somatic growth (structural growth) occurs at this stage, no energy reserves are maintained
         #the function takes ambient temperature and food concentration as environmental inputs and current structural mass and developmental stage as internal state inputs
-        currentgrowthrate = gd.growthanddevelopment_dsc2(temperature = self.temperature_zi(),
-                                                        f1con = self.food1concentration_zi(),
+        currentgrowthrate = gd.growthanddevelopment_dsc2(temperature = self.get_zi('temperature'),
+                                                        f1con = self.get_zi('food1concentration'),
                                                         strmass = self.structuralmass,
                                                         maxzd = self.maxzdistance,
                                                         actzd = self.actualzdistance,
@@ -331,7 +334,7 @@ class SuperIndividual(object):
         #dsc-II: survival submodel
         #-------------------------
         #this uses a modular function to estimate the total mortality risk faced by the super individual (as a probability of death)
-        currentmortalityrisk = sv.mortalityrisk_dsc2(strmass = self.structuralmass, maxstrmass = self.maxstructuralmass, p1dens = self.pred1dens_zi(), p1lightdp = self.pred1lightdep_zi(), p2risk = self.global_settings['pred2risk'], bgmrisk = self.global_settings['bgmortalityrisk'])
+        currentmortalityrisk = sv.mortalityrisk_dsc2(strmass = self.structuralmass, maxstrmass = self.maxstructuralmass, p1dens = self.get_zi('pred1dens'), p1lightdp = self.get_zi('pred1lightdep'), p2risk = self.global_settings['pred2risk'], bgmrisk = self.global_settings['bgmortalityrisk'])
 
         #the total mortality risk translates to the death of virtual individuals contained in a given super individual
         #when all virtual individuals contained in a super individual dies, then the super individual also dies
@@ -400,11 +403,11 @@ class SuperIndividual(object):
         #evolvable attribute ('gene') values and the above environmental data ranges are inputs to the modular function for vertical position estimation
         #calling the vertical position estimation function from the module
         #nb:this outputs four integers: (i) absolute vertical position and (ii) relative vertical position (index), (iii) maximum vertical search distance and (iv) actual vertical search distance
-        self.zpos, self.zidx, self.maxzdistance, self.actualzdistance = vm.verticalmigration_dsc4(temprange = self.environment.temperature[self.environment_index, :],
-                                                                                                        f1conrange = self.environment.food1concentration[self.environment_index, :],
-                                                                                                        iradrange = self.environment.irradiance[self.environment_index,:],
+        self.zpos, self.zidx, self.maxzdistance, self.actualzdistance = vm.verticalmigration_dsc4(temprange = self.get_profile('temperature'),
+                                                                                                        f1conrange = self.get_profile('food1concentration'),
+                                                                                                        iradrange = self.get_profile('irradiance'),
                                                                                                         maxirad = self.global_settings['maxirradiance'],
-                                                                                                        p1dnsrange = self.environment.pred1dens[self.environment_index,:],
+                                                                                                        p1dnsrange = self.get_profile('pred1dens'),
                                                                                                         a2 = self.genome.a2_irradiancesensitivity,
                                                                                                         a3 = self.genome.a3_pred1sensitivity,
                                                                                                         a4 = self.genome.a4_pred1reactivity,
@@ -425,8 +428,8 @@ class SuperIndividual(object):
             #this function estimates the somatic growth rate and developmental rates (development is a function of growth - stage progression is coded below)
             #the function takes ambient temperature and food concentration as environmental inputs and current structural & reserve masses as internal state inputs
             #this is female-specific (growth/degrowth both possible)
-            currentgrowthrate = gd.growthanddevelopment_dsc4f(temperature = self.temperature_zi(),
-                                                            f1con = self.food1concentration_zi(),
+            currentgrowthrate = gd.growthanddevelopment_dsc4f(temperature = self.get_zi('temperature'),
+                                                            f1con = self.get_zi('food1concentration'),
                                                             strmass = self.structuralmass,
                                                             resmass = self.reservemass,
                                                             maxzd = self.maxzdistance,
@@ -438,8 +441,8 @@ class SuperIndividual(object):
             #this function estimates the somatic growth rate and developmental rates (development is a function of growth - stage progression is coded below)
             #the function takes ambient temperature and food concentration as environmental inputs and current structural & reserve masses as internal state inputs
             #this is male-specific (degrowth is only possible)
-            currentgrowthrate = gd.growthanddevelopment_dsc4m(temperature = self.temperature_zi(),
-                                                            f1con = self.food1concentration_zi(),
+            currentgrowthrate = gd.growthanddevelopment_dsc4m(temperature = self.get_zi('temperature'),
+                                                            f1con = self.get_zi('food1concentration'),
                                                             strmass = self.structuralmass,
                                                             resmass = self.reservemass,
                                                             maxzd = self.maxzdistance,
@@ -563,8 +566,8 @@ class SuperIndividual(object):
         currentmortalityrisk = sv.mortalityrisk_dsc4(strmass = self.structuralmass,
                                                     maxstrmass = self.maxstructuralmass,
                                                     resmass = self.reservemass,
-                                                    p1dens = self.pred1dens_zi(),
-                                                    p1lightdp = self.pred1lightdep_zi(),
+                                                    p1dens = self.get_zi('pred1dens'),
+                                                    p1lightdp = self.get_zi('pred1lightdep'),
                                                     p2risk = self.global_settings['pred2risk'],
                                                     bgmrisk = self.global_settings['bgmortalityrisk'])
 
@@ -584,11 +587,11 @@ class SuperIndividual(object):
         #evolvable attribute ('gene') values and the above environmental data ranges are inputs to the modular function for vertical position estimation
         #calling the vertical position estimation function from the module
         #nb:this outputs four integers: (i) absolute vertical position and (ii) relative vertical position (index), (iii) maximum vertical search distance and (iv) actual vertical search distance
-        self.zpos, self.zidx, self.maxzdistance, self.actualzdistance = vm.verticalmigration_dsc3a(temprange = self.environment.temperature[self.environment_index,:],
-                                                                                                        f1conrange = self.environment.food1concentration[self.environment_index,:],
-                                                                                                        iradrange = self.environment.irradiance[self.environment_index,:],
+        self.zpos, self.zidx, self.maxzdistance, self.actualzdistance = vm.verticalmigration_dsc3a(temprange = self.get_profile('temperature'),
+                                                                                                        f1conrange = self.get_profile('food1concentration'),
+                                                                                                        iradrange = self.get_profile('irradiance'),
                                                                                                         maxirad = self.global_settings['maxirradiance'],
-                                                                                                        p1dnsrange = self.environment.pred1dens[self.environment_index,:],
+                                                                                                        p1dnsrange = self.get_profile('pred1dens'),
                                                                                                         a2 = self.genome.a2_irradiancesensitivity,
                                                                                                         a3 = self.genome.a3_pred1sensitivity,
                                                                                                         a4 = self.genome.a4_pred1reactivity,
@@ -603,8 +606,8 @@ class SuperIndividual(object):
         #extraction of apropriate environmental variables based on the current zidx
         #this function estimates the somatic growth rate, which is used in calculating the development rate (= 1 / development time)
         #the function takes ambient temperature and food concentration as environmental inputs and current structural & reserve masses as internal state inputs
-        currentgrowthrate = gd.growthanddevelopment_dsc3a(temperature = self.temperature_zi(),
-                                                        f1con = self.food1concentration_zi(),
+        currentgrowthrate = gd.growthanddevelopment_dsc3a(temperature = self.get_zi('temperature'),
+                                                        f1con = self.get_zi('food1concentration'),
                                                         strmass = self.structuralmass,
                                                         resmass = self.reservemass,
                                                         maxzd = self.maxzdistance,
@@ -745,8 +748,8 @@ class SuperIndividual(object):
         currentmortalityrisk = sv.mortalityrisk_dsc3a(strmass = self.structuralmass,
                                                     maxstrmass = self.maxstructuralmass,
                                                     resmass = self.reservemass,
-                                                    p1dens = self.pred1dens_zi(),
-                                                    p1lightdp = self.pred1lightdep_zi(),
+                                                    p1dens = self.get_zi('pred1dens'),
+                                                    p1lightdp = self.get_zi('pred1lightdep'),
                                                     p2risk = self.global_settings['pred2risk'],
                                                     bgmrisk = self.global_settings['bgmortalityrisk'])
 
@@ -775,7 +778,7 @@ class SuperIndividual(object):
         #the potential degrowth and/or reserve utilization is therefore, depndent on the ambient temperature and the total bodymass of the super individual
 
         #this uses a modular function to estimate the potential degrowth and/or reserve utilization of super individuals
-        currentgrowthrate = gd.growthanddevelopment_dsc3e(temperature = self.temperature_zi(),
+        currentgrowthrate = gd.growthanddevelopment_dsc3e(temperature = self.get_zi('temperature'),
                                                         strmass = self.structuralmass,
                                                         resmass = self.reservemass,
                                                         actzd = self.actualzdistance,
@@ -803,8 +806,8 @@ class SuperIndividual(object):
         currentmortalityrisk = sv.mortalityrisk_dsc3e(strmass = self.structuralmass,
                                                     maxstrmass = self.maxstructuralmass,
                                                     resmass = self.reservemass,
-                                                    p1dens = self.pred1dens_zi(),
-                                                    p1lightdp = self.pred1lightdep_zi(),
+                                                    p1dens = self.get_zi('pred1dens'),
+                                                    p1lightdp = self.get_zi('pred1lightdep'),
                                                     p2risk = self.global_settings['pred2risk'],
                                                     bgmrisk = self.global_settings['bgmortalityrisk'])
 
@@ -827,7 +830,7 @@ class SuperIndividual(object):
         #the potential degrowth and/or reserve utilization are depndent on the ambient temperature and the total bodymass of the super individual
 
         #this uses a modular function to estimate the potential degrowth and/or reserve utilization of super individuals
-        currentgrowthrate = gd.growthanddevelopment_dsc3d(temperature = self.temperature_zi(),
+        currentgrowthrate = gd.growthanddevelopment_dsc3d(temperature = self.get_zi('temperature'),
                                                         strmass = self.structuralmass,
                                                         resmass = self.reservemass,
                                                         modelres = self.modelres)
@@ -873,8 +876,8 @@ class SuperIndividual(object):
         self.mortalityrisk = sv.mortalityrisk_dsc3d(strmass = self.structuralmass,
                                                     maxstrmass = self.maxstructuralmass,
                                                     resmass = self.reservemass,
-                                                    p1dens = self.pred1dens_zi(),
-                                                    p1lightdp = self.pred1lightdep_zi(),
+                                                    p1dens = self.get_zi('pred1dens'),
+                                                    p1lightdp = self.get_zi('pred1lightdep'),
                                                     p2risk = self.global_settings['pred2risk'],
                                                     bgmrisk = self.global_settings['bgmortalityrisk'])
 
@@ -904,7 +907,7 @@ class SuperIndividual(object):
         #the potential degrowth and/or reserve utilization is therefore, depndent on the ambient temperature and the total bodymass of the super individual
 
         #this uses a modular function to estimate the potential degrowth and/or reserve utilization of super individuals
-        currentgrowthrate = gd.growthanddevelopment_dsc3x(temperature = self.temperature_zi(),
+        currentgrowthrate = gd.growthanddevelopment_dsc3x(temperature = self.get_zi('temperature'),
                                                         strmass = self.structuralmass,
                                                         resmass = self.reservemass,
                                                         actzd = self.actualzdistance,
@@ -947,8 +950,8 @@ class SuperIndividual(object):
         currentmortalityrisk = sv.mortalityrisk_dsc3x(strmass = self.structuralmass,
                                                     maxstrmass = self.maxstructuralmass,
                                                     resmass = self.reservemass,
-                                                    p1dens = self.pred1dens_zi(),
-                                                    p1lightdp = self.pred1lightdep_zi(),
+                                                    p1dens = self.get_zi('pred1dens'),
+                                                    p1lightdp = self.get_zi('pred1light'),
                                                     p2risk = self.global_settings['pred2risk'],
                                                     bgmrisk = self.global_settings['bgmortalityrisk'])
 
@@ -973,11 +976,11 @@ class SuperIndividual(object):
         #calling the vertical position estimation function from the module
         #nb:this outputs four integers: (i) absolute vertical position and (ii) relative vertical position (index), (iii) maximum vertical search distance and (iv) actual vertical search distance
         self.update
-        self.zpos, self.zidx, self.maxzdistance, self.actualzdistance = vm.verticalmigration_dsc3p(temprange = self.environment.temperature[self.environment_index, :],
-                                                                                                        f1conrange = self.environment.food1concentration[self.environment_index, :],
-                                                                                                        iradrange = self.environment.irradiance[self.environment_index,:],
+        self.zpos, self.zidx, self.maxzdistance, self.actualzdistance = vm.verticalmigration_dsc3p(temprange = self.profile('temperature'),
+                                                                                                        f1conrange = self.get_profile('food1concentration'),
+                                                                                                        iradrange = self.get_profile('irradiance'),
                                                                                                         maxirad = self.global_settings['maxirradiance'],
-                                                                                                        p1dnsrange = self.environment.pred1dens[self.environment_index,:],
+                                                                                                        p1dnsrange = self.get_profile('pred1dens'),
                                                                                                         a2 = self.genome.a2_irradiancesensitivity,
                                                                                                         a3 = self.genome.a3_pred1sensitivity,
                                                                                                         a4 = self.genome.a4_pred1reactivity,
@@ -991,8 +994,8 @@ class SuperIndividual(object):
         #-----------------------------------------
         #this function estimates the somatic growth rate and developmental rates (development is a function of growth - stage progression is coded below)
         #the function takes ambient temperature and food concentration as environmental inputs and current structural & reserve masses as internal state inputs
-        currentgrowthrate = gd.growthanddevelopment_dsc3p(temperature = self.temperature_zi(),
-                                                        f1con = self.food1concentration_zi(),
+        currentgrowthrate = gd.growthanddevelopment_dsc3p(temperature = self.get_zi('temperature'),
+                                                        f1con = self.get_zi('food1concentration'),
                                                         strmass = self.structuralmass,
                                                         resmass = self.reservemass,
                                                         maxzd = self.maxzdistance,
@@ -1030,8 +1033,8 @@ class SuperIndividual(object):
         currentmortalityrisk = sv.mortalityrisk_dsc3p(strmass = self.structuralmass,
                                                     maxstrmass = self.maxstructuralmass,
                                                     resmass = self.reservemass,
-                                                    p1dens = self.pred1dens_zi(),
-                                                    p1lightdp = self.pred1lightdep_zi(),
+                                                    p1dens = self.get_zi('pred1dens'),
+                                                    p1lightdp = self.get_zi('pred1lightdep'),
                                                     p2risk = self.global_settings['pred2risk'],
                                                     bgmrisk = self.global_settings['bgmortalityrisk'])
 
@@ -1108,5 +1111,5 @@ class SuperIndividual(object):
         else:
             col = self.developmentalstage
 
-        return [col, self.environment.x[self.environment_index], self.environment.y[self.environment_index], self.zidx, self.nvindividuals, self.structuralmass + self.reservemass] #Check this is the correct Z
+        return [col, self.zidx, self.nvindividuals, self.structuralmass + self.reservemass] #Check this is the correct Z
     

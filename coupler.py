@@ -2,6 +2,8 @@
 from individual import SuperIndividual
 from functools import reduce
 from data_logger import OutputLogger
+from pascal_drift import PascalDrift
+
 
 import datetime as dt
 import numpy as np
@@ -82,7 +84,7 @@ class PascalSimulation(object):
             self.update_environment()
             self.update_lifestage()
             # Maybe some of these happen at a slower timestep
-            self.datalogger.log_spatial(self.supindividuals)
+            self.log_spatial()
             self.gene_hunt()
             self.clean_dead() # Need to add to log file, reorder superindividual dictionary and sort environment index(?) 
             self.respawn()
@@ -96,6 +98,10 @@ class PascalSimulation(object):
             if this_individual is not None:
                 this_individual.update_lifestage()
 
+    def log_spatial(self):
+        spatial_data = np.asarray([si.get_spatial_log_data() for si in self.active_supindividuals()]) #[col, self.zidx, self.nvindividuals, self.structuralmass + self.reservemass] 
+        cxyz = np.stack([spatial_data[:,0], self.tracker.elements.lon[self.environment_indices()], self.tracker.elements.lat[self.environment_indices()], spatial_data[:,1]]).T
+        self.datalogger.log_spatial(cxyz, spatial_data[:,2], spatial_data[:,3])
 
     def respawn(self):
         nspaces = np.sum(np.asarray(self.supindividuals) == None)
@@ -147,7 +153,7 @@ class PascalSimulation(object):
                 genome = [None for i in np.arange(0,nseeds)]
         
             for i in np.arange(0, nseeds):
-                self.supindividuals[i + firstNone] = SuperIndividual(self.global_settings, self.diapause_depth, self.tracker.environment, environment_indices[i], nindividuals=self.ni_per_sup, genes=genome[i]) # Should diapause depth be random?
+                self.supindividuals[i + firstNone] = SuperIndividual(self.global_settings, self.diapause_depth, self.tracker.environment, self.tracker.environment_profiles, environment_indices[i], nindividuals=self.ni_per_sup, genes=genome[i]) # Should diapause depth be random?
 
 
     def clean_dead(self):
@@ -175,6 +181,9 @@ class PascalSimulation(object):
     def active_supindividuals(self):
         return np.asarray(self.supindividuals)[~np.isin(self.supindividuals, None)]
 
+    def environment_indices(self):
+        return [si.environment_index for si in self.active_supindividuals()]
+
 class Pascal1D(PascalSimulation):
     def prep_environment(self, reader):
         self.all_data = reader
@@ -189,9 +198,10 @@ class Pascal1D(PascalSimulation):
         init_dict = {}
         for k,v in self.all_data.items():
             init_dict[k] = v[self.time_ind,...]
-        init_dict['x'] = [0]
-        init_dict['y'] = [0]
-        self.tracker = dotdict({'environment':dotdict(init_dict)})
+        init_dict['lon'] = [0]
+        init_dict['lat'] = [0]
+        self.tracker = dotdict({'environment':dotdict(init_dict), 'environment_profiles':dotdict(init_dict), 'elements':dotdict(init_dict)})
+        
 
     def gene_hunt(self):
         # In 1-D all the animals are near to each other so all females are considered near to all males, therefore just pick a random male
@@ -207,19 +217,27 @@ class Pascal1D(PascalSimulation):
 class PascalAdvection(PascalSimulation):
 
     def prep_environment(self, reader):
+        self.time_ind = 0
         self.tracker = PascalDrift()
         self.tracker.add_reader(reader)
         self.tracker.set_config('vertical_mixing:diffusivitymodel', 'windspeed_Sundby1983')
-        self.tracker.seed_elements(lon=3, lat=60.5, z=-10, number=self.nsup, radius=30000, time=self.start_time) # Need to change start times to fit sequential seeding in original pascal
-        self.tracker.run_prep(time_step=time_step,
-                steps=steps,
-                time_step_output=time_step_output,
-                duration=duration,
-                end_time=end_time,
-                stop_on_error=stop_on_error)
+        self.tracker.seed_elements(lon=3, lat=60.5, z=-10, number=self.nsup, radius=30000, time=self.start_time - self.timestep) # Need to change start times to fit sequential seeding in original pascal
+        self.tracker.run_prep(time_step=self.timestep.seconds,
+                steps=None,
+                time_step_output=None,
+                duration=None,
+                end_time=self.end_time,
+                stop_on_error=True)
+        self.tracker.run_1step() # Need this to populate the environment
+
+    def prep_outputgrid(self, outputgrid):
+        outputgrid['time'] = self.all_steps
+        outputgrid['depth'] = self.global_settings['depthrange']
+        self.outputgrid = outputgrid
 
     def update_environment(self):
-        self.tracker.run1step()
+        self.time_ind+= 1
+        self.tracker.run_1step()
 
     def gene_hunt(self):
         pass

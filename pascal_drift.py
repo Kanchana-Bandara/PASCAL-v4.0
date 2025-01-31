@@ -1,5 +1,8 @@
-
+import sys
+sys.path.append(r'/home/michael/Projects/Migratory_crossroads/Models/pascal_modular/opendrift_pascal')
 from opendrift.models.oceandrift import OceanDrift, Lagrangian3DArray
+
+import numpy as np
 
 class PascalEnv(Lagrangian3DArray):
     """Extending Lagrangian3DArray with specific properties for biofoulable plastic
@@ -28,24 +31,25 @@ class PascalDrift(OceanDrift):
     required_variables = {
         'x_sea_water_velocity': {'fallback': 0},
         'y_sea_water_velocity': {'fallback': 0},
-        'sea_surface_wave_significant_height': {'fallback': 0},
-        'sea_ice_area_fraction': {'fallback': 0},
-        'x_wind': {'fallback': 0},
-        'y_wind': {'fallback': 0},
+        #'sea_surface_wave_significant_height': {'fallback': 0},
+        #'sea_ice_area_fraction': {'fallback': 0},
+        #'x_wind': {'fallback': 0},
+        #'y_wind': {'fallback': 0},
         'land_binary_mask': {'fallback': None},
         'sea_floor_depth_below_sea_level': {'fallback': 1000},
         'ocean_vertical_diffusivity': {'fallback': 0.02, 'profiles': True},
-        'ocean_mixed_layer_thickness': {'fallback': 50},
-        'sea_water_temperature': {'fallback': 10, 'profiles': True},
-        'sea_water_salinity': {'fallback': 34, 'profiles': True},
-        'surface_downward_x_stress': {'fallback': 0},
-        'surface_downward_y_stress': {'fallback': 0},
-        'turbulent_kinetic_energy': {'fallback': 0},
-        'turbulent_generic_length_scale': {'fallback': 0},
+        'mld': {'fallback': 50},
+        'temperature': {'fallback': 10, 'profiles': True},
+        #'sea_water_salinity': {'fallback': 34, 'profiles': True},
+        #'surface_downward_x_stress': {'fallback': 0},
+        #'surface_downward_y_stress': {'fallback': 0},
+        #'turbulent_kinetic_energy': {'fallback': 0},
+        #'turbulent_generic_length_scale': {'fallback': 0},
         'upward_sea_water_velocity': {'fallback': 0},
-        'mass_concentration_of_phytoplankton_expressed_as_carbon_in_sea_water':{'fallback':0, 'profiles': True},
-        'mass_concentration_of_chlorophyll_a_in_sea_water':{'fallback':0, 'profiles': True},
-        'surface_net_downward_radiative_flux':{'fallback':0}
+        'food1concentration':{'fallback':0, 'profiles': True},
+        'irradiance':{'fallback':0, 'profiles': True},
+        'pred1dens':{'fallback':0, 'profiles': True},
+        'pred1lightdep':{'fallback':0, 'profiles': True},
       }
 
     # Default colors for plotting
@@ -70,9 +74,6 @@ class PascalDrift(OceanDrift):
         # Vertical advection
         if self.get_config('drift:vertical_advection') is True:
             self.vertical_advection()
-
-        # Update life stage
-        self.update_lifestage()
 
         # Reproduction and reseeding
 
