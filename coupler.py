@@ -22,9 +22,23 @@ def flatten_list(xss): # Move to utils
     return [x for xs in xss for x in xs]
 
 class PascalSimulation(object):
-    def __init__(self, nsupindividuals, nvindividualspersupindividual, global_settings, reader, timestep, start_date, duration, seeding_rate, diapause_depth = 500, outputgrid=None):
-        self.start_run()
-        self.nsup = nsupindividuals
+    def __init__(self, nsupindividuals, nvindividualspersupindividual, global_settings, reader, timestep, start_date, duration, seeding_rate, diapause_depth = 500, outputgrid=None, debug=None):
+        print("")
+        termcolor.cprint(text = "Pan-Arctic Behavioural and Life-history Simulator for Calanus, PASCAL version 4.00", color = "cyan")
+        termcolor.cprint(text = "Kanchana Bandara et al. | NFR Migratory Crossroads 2024-2027", color = "cyan")
+        termcolor.cprint(text = "Evaluation execution for functionality testing and debugging", color = "cyan")
+        termcolor.cprint(text = "____________________________________________________________________________________", color = "light_blue")
+        print("")
+        termcolor.cprint(text = "enter a unique identifier for the execution (e.g., pascalv4_r001):", color = "light_red")
+        self.outputfolder = input("TYPE ID HERE AND PRESS ENTER: ")
+        termcolor.cprint(text = "____________________________________________________________________________________", color = "light_blue")
+        print("")
+        execstarttime_rec = dt.datetime.now()
+        execstarttime_prt = strftime("%Y-%m-%d %H:%M:%S", gmtime())
+        termcolor.cprint(text = f"\nexecution started at: {execstarttime_prt} GMT", color = "light_blue")
+        termcolor.cprint(text = "____________________________________________________________________________________", color = "light_blue")
+
+		self.nsup = nsupindividuals
         self.supindividuals = [None for j in np.arange(0, nsupindividuals)]
         self.ni_per_sup = nvindividualspersupindividual
         self.global_settings = global_settings
@@ -48,37 +62,13 @@ class PascalSimulation(object):
         self.prep_outputgrid(outputgrid)
         self.datalogger = OutputLogger(self.outputfolder, len(self.all_steps), self.outputgrid)
 
-
-    def start_run(self):
-        print("")
-        termcolor.cprint(text = "Pan-Arctic Behavioural and Life-history Simulator for Calanus, PASCAL version 4.00", color = "cyan")
-        termcolor.cprint(text = "Kanchana Bandara et al. | NFR Migratory Crossroads 2024-2027", color = "cyan")
-        termcolor.cprint(text = "Evaluation execution for functionality testing and debugging", color = "cyan")
-        termcolor.cprint(text = "____________________________________________________________________________________", color = "light_blue")
-        print("")
-        termcolor.cprint(text = "enter a unique identifier for the execution (e.g., pascalv4_r001):", color = "light_red")
-        self.outputfolder = input("TYPE ID HERE AND PRESS ENTER: ")
-        termcolor.cprint(text = "____________________________________________________________________________________", color = "light_blue")
-        print("")
-        execstarttime_rec = dt.datetime.now()
-        execstarttime_prt = strftime("%Y-%m-%d %H:%M:%S", gmtime())
-        termcolor.cprint(text = f"\nexecution started at: {execstarttime_prt} GMT", color = "light_blue")
-        termcolor.cprint(text = "____________________________________________________________________________________", color = "light_blue")
+		self.debug = debug
 
     def run(self):
         termcolor.cprint(text = "[SIMULATION IN PROGRESS]", color = "light_red")
 
         # Setup initial individuals
         self.seed(self.seeding_rate)
-
-        # Run the main loop
-        self.run_main()
-
-        # Tidy up
-        self.finish_run()
-
-
-    def run_main(self):
 
         for this_step in self.all_steps:
             self.update_environment()
@@ -90,8 +80,16 @@ class PascalSimulation(object):
             self.respawn()
             if self.current_time.day == 1 and self.current_time.hour == 0 and self.current_time.minute == 0:
                 self.report()
+
+			if self.debug is not None:
+				self.debug_out()
+
             # Increment datetime
             self.current_time += self.timestep
+
+        # Tidy up
+        self.finish_run()
+
 
     def update_lifestage(self):
         for this_individual in self.supindividuals:
@@ -184,6 +182,8 @@ class PascalSimulation(object):
     def environment_indices(self):
         return [si.environment_index for si in self.active_supindividuals()]
 
+	def debug_out
+
 class Pascal1D(PascalSimulation):
     def prep_environment(self, reader):
         self.all_data = reader
@@ -197,9 +197,12 @@ class Pascal1D(PascalSimulation):
         self.time_ind+= 1
         init_dict = {}
         for k,v in self.all_data.items():
-            init_dict[k] = v[self.time_ind,...]
-        init_dict['lon'] = [0]
-        init_dict['lat'] = [0]
+            if k == 'z':
+                init_dict['z'] = v
+            else:
+                init_dict[k] = v[self.time_ind,...]
+        init_dict['lon'] = np.asarray([0])
+        init_dict['lat'] = np.asarray([0])
         self.tracker = dotdict({'environment':dotdict(init_dict), 'environment_profiles':dotdict(init_dict), 'elements':dotdict(init_dict)})
         
 
@@ -218,8 +221,9 @@ class PascalAdvection(PascalSimulation):
 
     def prep_environment(self, reader):
         self.time_ind = 0
-        self.tracker = PascalDrift()
+        self.tracker = PascalDrift(loglevel=100)
         self.tracker.add_reader(reader)
+        self.tracker.set_config('general:use_auto_landmask', False)
         self.tracker.set_config('vertical_mixing:diffusivitymodel', 'windspeed_Sundby1983')
         self.tracker.seed_elements(lon=3, lat=60.5, z=-10, number=self.nsup, radius=30000, time=self.start_time - self.timestep) # Need to change start times to fit sequential seeding in original pascal
         self.tracker.run_prep(time_step=self.timestep.seconds,
