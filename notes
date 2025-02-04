@@ -21,3 +21,8 @@ change variable names to opendrift compatable
 - update time_ind probably should happen in the simulation base class
 - depthgrade - should we reinterpolate model data or use model levels
 
+
+For debugging:
+- turn of stochasticity
+- output variables per timestep
+

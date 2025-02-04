@@ -22,7 +22,7 @@ def flatten_list(xss): # Move to utils
     return [x for xs in xss for x in xs]
 
 class PascalSimulation(object):
-    def __init__(self, nsupindividuals, nvindividualspersupindividual, global_settings, reader, timestep, start_date, duration, seeding_rate, diapause_depth = 500, outputgrid=None, debug=None):
+    def __init__(self, nsupindividuals, nvindividualspersupindividual, global_settings, reader, timestep, start_date, duration, seeding_rate, diapause_depth = 500, outputgrid=None, debug=None, opendriftoutfile=None):
         print("")
         termcolor.cprint(text = "Pan-Arctic Behavioural and Life-history Simulator for Calanus, PASCAL version 4.00", color = "cyan")
         termcolor.cprint(text = "Kanchana Bandara et al. | NFR Migratory Crossroads 2024-2027", color = "cyan")
@@ -38,7 +38,7 @@ class PascalSimulation(object):
         termcolor.cprint(text = f"\nexecution started at: {execstarttime_prt} GMT", color = "light_blue")
         termcolor.cprint(text = "____________________________________________________________________________________", color = "light_blue")
 
-		self.nsup = nsupindividuals
+        self.nsup = nsupindividuals
         self.supindividuals = [None for j in np.arange(0, nsupindividuals)]
         self.ni_per_sup = nvindividualspersupindividual
         self.global_settings = global_settings
@@ -62,7 +62,12 @@ class PascalSimulation(object):
         self.prep_outputgrid(outputgrid)
         self.datalogger = OutputLogger(self.outputfolder, len(self.all_steps), self.outputgrid)
 
-		self.debug = debug
+        self.opendriftout = opendriftoutfile
+        self.debug = debug
+        if self.debug is not None:
+            self.debug_output = {}
+            for this_var in self.debug:
+                self.debug_output[this_var] = []
 
     def run(self):
         termcolor.cprint(text = "[SIMULATION IN PROGRESS]", color = "light_red")
@@ -70,22 +75,25 @@ class PascalSimulation(object):
         # Setup initial individuals
         self.seed(self.seeding_rate)
 
-        for this_step in self.all_steps:
-            self.update_environment()
-            self.update_lifestage()
-            # Maybe some of these happen at a slower timestep
-            self.log_spatial()
-            self.gene_hunt()
-            self.clean_dead() # Need to add to log file, reorder superindividual dictionary and sort environment index(?) 
-            self.respawn()
-            if self.current_time.day == 1 and self.current_time.hour == 0 and self.current_time.minute == 0:
-                self.report()
+        try:
+            for this_step in self.all_steps:
+                self.update_environment()
+                self.update_lifestage()
+                # Maybe some of these happen at a slower timestep
+                self.log_spatial()
+                self.gene_hunt()
+                self.clean_dead() # Need to add to log file, reorder superindividual dictionary and sort environment index(?) 
+                self.respawn()
+                if self.current_time.day == 1 and self.current_time.hour == 0 and self.current_time.minute == 0:
+                    self.report()
 
-			if self.debug is not None:
-				self.debug_out()
+                if self.debug is not None:
+                    self.debug_out()
 
-            # Increment datetime
-            self.current_time += self.timestep
+                # Increment datetime
+                self.current_time += self.timestep
+        except:
+            print('Error!')
 
         # Tidy up
         self.finish_run()
@@ -160,7 +168,9 @@ class PascalSimulation(object):
             [self.supindividuals.pop(i) for i in remove]
             self.supindividuals = flatten_list([self.supindividuals, [None for i in remove]])
 
-    def finish_run(self):    
+    def finish_run(self):
+        if self.debug is not None:
+            np.save('debug_output.npy', self.debug_output)
         self.datalogger.write_lifestrategies()
         self.datalogger.write_spatial()
 
@@ -182,7 +192,11 @@ class PascalSimulation(object):
     def environment_indices(self):
         return [si.environment_index for si in self.active_supindividuals()]
 
-	def debug_out
+    def debug_out(self):
+        for this_var in self.debug:
+            self.debug_output[this_var].append(getattr(self.supindividuals[0], this_var))
+            
+        
 
 class Pascal1D(PascalSimulation):
     def prep_environment(self, reader):
@@ -244,11 +258,19 @@ class PascalAdvection(PascalSimulation):
         self.tracker.run_1step()
 
     def gene_hunt(self):
-        pass
+        #!!!!!!! Temporary code !!!!!!!!!
+        # This just applies from any male, but should do a search for a max distance first. This should be fairly straightforward with
+        # self.tracer.elements['x'] (/y) and then a self.max_dist
+        noninseminated_females = [i for i in self.active_supindividuals() if i.sex == 'F' and i.inseminationstate == 0]
+        males = [i for i in self.active_supindividuals() if i.sex == 'M']
+
+        if len(males) > 0:
+            for this_f in noninseminated_females:
+                selected_male = random.choice(males)
+                this_f.malegenome = selected_male.genome
 
     def finish_run(self):
-        self.tracker.run_end(outfile=outfile, export_variables=export_variables,
-                export_buffer_length=export_buffer_length)
+        self.tracker.run_end(outfile=self.opendriftout, export_variables=['x', 'y', 'temperature'])
     
         super(PascalAdvection, self).finish_run()
 

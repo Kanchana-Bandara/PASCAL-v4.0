@@ -23,7 +23,6 @@ from datetime import datetime
 import pascalv4_mod_verticalmigration as vm
 import pascalv4_mod_growthanddevelopment as gd
 import pascalv4_mod_survival as sv
-import pascalv4_mod_reproduction as rp
 
 class dotdict(dict):
     """dot.notation access to dictionary attributes"""
@@ -189,7 +188,7 @@ class SuperIndividual(object):
         #simulation of death of super individuals (i.e., when all virtual individual dies, a super individual also dies)
         #all state variables, gene values, loggers etc. are reset for a new super individual to take its place (these do not need to be re-initialized at seeding/spawning; only the 'gene' values do)
 
-        if self.nvindividuals <= 0 or self.age >= self.global_settings['ageceiling'] or self.totalfecundity >= self.global_settings['fecundityceiling']: #!!!!! This should be done by the subpopulation
+        if self.nvindividuals <= 0 or self.age >= self.global_settings['ageceiling'] or self.totalfecundity >= self.global_settings['fecundityceiling']:
             #print('DEATH !!!!!!!!!!!!!!!!!!!')
             self.lifestatus = 0
 
@@ -975,7 +974,6 @@ class SuperIndividual(object):
         #evolvable attribute ('gene') values and the above environmental data ranges are inputs to the modular function for vertical position estimation
         #calling the vertical position estimation function from the module
         #nb:this outputs four integers: (i) absolute vertical position and (ii) relative vertical position (index), (iii) maximum vertical search distance and (iv) actual vertical search distance
-        self.update
         self.zpos, self.zidx, self.maxzdistance, self.actualzdistance = vm.verticalmigration_dsc3p(temprange = self.profile('temperature'),
                                                                                                         f1conrange = self.get_profile('food1concentration'),
                                                                                                         iradrange = self.get_profile('irradiance'),
