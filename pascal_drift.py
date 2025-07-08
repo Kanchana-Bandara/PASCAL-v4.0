@@ -1,5 +1,5 @@
-import sys
-sys.path.append(r'/home/michael/Projects/Migratory_crossroads/Models/pascal_modular/opendrift_pascal')
+#import sys
+#sys.path.append(r'/home/michael/Projects/Migratory_crossroads/Models/pascal_modular/opendrift_pascal')
 from opendrift.models.oceandrift import OceanDrift, Lagrangian3DArray
 
 import numpy as np

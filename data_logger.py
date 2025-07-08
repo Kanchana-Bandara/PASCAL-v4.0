@@ -127,12 +127,12 @@ class OutputLogger(object):
         datavar1 = populationsize_ds.createVariable("popsize", np.int32, ("time", "devstage", "lon", "lat", "depth",))
         datavar1.units = "no. of individuals"
         datavar1.longname = "estimated stage-, time- and space-specific population size of Calanus finmarchicus"
-        datavar1[:] = np.asarray(self.spatial_population_size)
+        datavar1[:] = self.pad_data(np.asarray(self.spatial_population_size))
 
         datavar2 = populationsize_ds.createVariable("biomass", np.int32, ("time", "devstage", "lon", "lat", "depth",))
         datavar2.units = "gC"
         datavar2.longname = "estimated stage-, time- and space-specific biomass of Calanus finmarchicus"
-        datavar2[:] = np.asarray(self.spatial_biomass) 
+        datavar2[:] = self.pad_data(np.asarray(self.spatial_biomass))
         
         populationsize_ds.close()
 
@@ -152,3 +152,13 @@ class OutputLogger(object):
         #file-write status print
         termcolor.cprint(text = "[FILE WRITING COMPLETED]", color = "light_red")
 
+
+    def pad_data(self, data):
+        target_shape =  (self.total_timesteps, self.devstages, len(self.output_grid['lon']), len(self.output_grid['lat']),
+                            len(self.output_grid['depth']))
+        if data.shape != target_shape:
+            padded = np.full(target_shape, np.nan, dtype=data.dtype)
+            padded[:data.shape[0], ...] = data
+            return padded
+        else:
+            return data

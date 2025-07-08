@@ -4,7 +4,6 @@ from functools import reduce
 from data_logger import OutputLogger
 from pascal_drift import PascalDrift
 
-
 import datetime as dt
 import numpy as np
 import termcolor
@@ -58,11 +57,11 @@ class PascalSimulation(object):
         self.seeding_rate = seeding_rate
 
         # Setup the environment, logger, and the super individuals
+        self.opendriftout = opendriftoutfile
         self.prep_environment(reader)
         self.prep_outputgrid(outputgrid)
         self.datalogger = OutputLogger(self.outputfolder, len(self.all_steps), self.outputgrid)
 
-        self.opendriftout = opendriftoutfile
         self.debug = debug
         if self.debug is not None:
             self.debug_output = {}
@@ -245,7 +244,9 @@ class PascalAdvection(PascalSimulation):
                 time_step_output=None,
                 duration=None,
                 end_time=self.end_time,
-                stop_on_error=True)
+                stop_on_error=True,
+                outfile=self.opendriftout,
+                export_variables=['x', 'y', 'temperature'])
         self.tracker.run_1step() # Need this to populate the environment
 
     def prep_outputgrid(self, outputgrid):
@@ -270,7 +271,7 @@ class PascalAdvection(PascalSimulation):
                 this_f.malegenome = selected_male.genome
 
     def finish_run(self):
-        self.tracker.run_end(outfile=self.opendriftout, export_variables=['x', 'y', 'temperature'])
+        self.tracker.run_end()
     
         super(PascalAdvection, self).finish_run()
 
