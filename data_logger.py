@@ -124,18 +124,21 @@ class OutputLogger(object):
         timevar.longname = "time of year in 6h intervals"
         timevar[:] = self.output_grid['time']
 
-        datavar1 = populationsize_ds.createVariable("popsize", np.int32, ("time", "devstage", "lon", "lat", "depth",))
-        datavar1.units = "no. of individuals"
-        datavar1.longname = "estimated stage-, time- and space-specific population size of Calanus finmarchicus"
-        datavar1[:] = self.pad_data(np.asarray(self.spatial_population_size))
+        populationsize_ds = self._write_4d_var(populationsize_ds, "popsize", self.spatial_population_size, attributes = {"units":"no. of individuals", 
+                "longname":"estimated stage-, time- and space-specific population size of Calanus finmarchicus"})
 
-        datavar2 = populationsize_ds.createVariable("biomass", np.int32, ("time", "devstage", "lon", "lat", "depth",))
-        datavar2.units = "gC"
-        datavar2.longname = "estimated stage-, time- and space-specific biomass of Calanus finmarchicus"
-        datavar2[:] = self.pad_data(np.asarray(self.spatial_biomass))
+        populationsize_ds = self._write_4d_var(populationsize_ds, "biomass", self.spatial_biomass, attributes = {"units":"gC",
+                "longname":"estimated stage-, time- and space-specific biomass of Calanus finmarchicus"})
         
         populationsize_ds.close()
 
+
+    def _write_4d_var(self, ds, varname, data, attributes={}, dtype=np.int32):
+        dv1 = ds.createVariable(varname, dtype, ("time", "devstage", "lon", "lat", "depth",))
+        for att_name, att_val in attributes.items():
+            setattr(dv1,att_name,att_val)
+        dv1[:] = self.pad_data(np.asarray(data))
+        return ds
 
     def write_lifestrategies(self):
         lcstrategies = np.hstack(tup = (self.lifecycle_i, self.lifecycle_f), dtype = np.float32)
