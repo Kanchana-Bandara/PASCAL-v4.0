@@ -9,7 +9,7 @@ DEFAULT_SAVE = {'population_size':{"units":"no. of individuals", "longname":"est
 
 class OutputLogger(object):
 
-    def __init__(self, outputfolder, total_timesteps, output_grid, devstages = 13, lifestrategies_size=[5,8], save_spatial=DEFAULT_SAVE):
+    def __init__(self, outputfolder, total_timesteps, output_grid, devstages = 13, lifestrategies_size=[5,8], no_evolvable=8, save_spatial=DEFAULT_SAVE):
         # These are split by developmental stages (up to 13 with 12 (13) being female (male) at stage zz)
         self.currentsubpopulation = 'all' # At the moment not logged by subpopulation
         self.total_mass = [] 
@@ -20,12 +20,16 @@ class OutputLogger(object):
         self.devstages = devstages
         self.lifestrategies_size = lifestrategies_size
         self.total_timesteps = total_timesteps
+        self.no_evolvable = no_evolvable
         self.output_grid = output_grid
         self.prep_grid()
 
         # These will have columns for each of the different life strategies and a row for each timestep
         self.lifecycle_i = np.zeros([self.total_timesteps, self.lifestrategies_size[0]])
         self.lifecycle_f = np.zeros([self.total_timesteps, self.lifestrategies_size[1]])
+
+        # Log the changing genomes
+        self.genome_log = np.zeros([self.total_timesteps, self.no_evolvable, 2])
 
         # Setup the output
         self.outputfolder = outputfolder
@@ -62,6 +66,10 @@ class OutputLogger(object):
         resolved_dict = self.resolve_spatial(cxyz, data_dict)
         for varname, data in self.spatial_output.items():
            data.append(resolved_dict[varname])
+
+    def log_evolvable(self, genomes, timestep):
+        self.genome_log[timestep, :, 0] = np.mean(genomes)
+        self.genome_log[timestep, :, 1] = np.std(genomes)
 
     def resolve_spatial(self, cxyz, data_dict):
         gridded_data = {}
