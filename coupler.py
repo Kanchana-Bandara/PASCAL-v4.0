@@ -106,7 +106,7 @@ class PascalSimulation(object):
     def log_spatial(self):
         spatial_data = np.asarray([si.get_spatial_log_data() for si in self.active_supindividuals()]) #[col, self.zidx, self.nvindividuals, self.structuralmass + self.reservemass] 
         cxyz = np.stack([spatial_data[:,0], self.tracker.elements.lon[self.environment_indices()], self.tracker.elements.lat[self.environment_indices()], spatial_data[:,1]]).T
-        self.datalogger.log_spatial(cxyz, spatial_data[:,2], spatial_data[:,3])
+        self.datalogger.log_spatial(cxyz, {'population_size':spatial_data[:,2], 'biomass':spatial_data[:,3]})
 
     def respawn(self):
         nspaces = np.sum(np.asarray(self.supindividuals) == None)

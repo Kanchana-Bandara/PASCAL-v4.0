@@ -4,14 +4,19 @@ import pandas as pd
 import os
 import termcolor
 
+DEFAULT_SAVE = {'population_size':{"units":"no. of individuals", "longname":"estimated stage-, time- and space-specific population size of Calanus finmarchicus"},
+                'biomass':{"units":"gC", "longname":"estimated stage-, time- and space-specific biomass of Calanus finmarchicus"}}
+
 class OutputLogger(object):
 
-    def __init__(self, outputfolder, total_timesteps, output_grid, devstages = 13, lifestrategies_size=[5,8]):
+    def __init__(self, outputfolder, total_timesteps, output_grid, devstages = 13, lifestrategies_size=[5,8], save_spatial=DEFAULT_SAVE):
         # These are split by developmental stages (up to 13 with 12 (13) being female (male) at stage zz)
         self.currentsubpopulation = 'all' # At the moment not logged by subpopulation
         self.total_mass = [] 
-        self.spatial_population_size = []
-        self.spatial_biomass = []
+        self.spatial_atts = save_spatial
+        self.spatial_output = {}
+        for save_var in save_spatial.keys():
+            self.spatial_output[save_var] = []
         self.devstages = devstages
         self.lifestrategies_size = lifestrategies_size
         self.total_timesteps = total_timesteps
@@ -51,15 +56,18 @@ class OutputLogger(object):
     def add_lifecyle_f(self, val, col, timestep):
         self.lifecycle_f[timestep, col] += val
 
-    def log_spatial(self, cxyz, pop_size_individual, biomass_individual):
+    def log_spatial(self, cxyz, data_dict):
         # This is done at the coupler level as it varies based on the forcing (1-D or spatially resolved)
-        pop_size, biomass = (self.resolve_spatial(cxyz, pop_size_individual, biomass_individual))
-        self.spatial_population_size.append(pop_size) # Should at some point change this to writing to the netcdf at each timestep
-        self.spatial_biomass.append(biomass)
+        # TODO - write at each timestep rather than dumping to a dict
+        resolved_dict = self.resolve_spatial(cxyz, data_dict)
+        for varname, data in self.spatial_output.items():
+           data.append(resolved_dict[varname])
 
-    def resolve_spatial(self, cxyz, data1, data2):
-        gridded_data1 = np.zeros([self.devstages, len(self.output_grid['lon']), len(self.output_grid['lat']), len(self.output_grid['depth'])])
-        gridded_data2 = np.zeros([self.devstages, len(self.output_grid['lon']), len(self.output_grid['lat']), len(self.output_grid['depth'])])
+    def resolve_spatial(self, cxyz, data_dict):
+        gridded_data = {}
+        for var in data_dict.keys():
+            gridded_data[var] = np.zeros([self.devstages, len(self.output_grid['lon']), len(self.output_grid['lat']), len(self.output_grid['depth'])])
+        
         cxyz[cxyz[:,1] > self.max_lon,1] = self.max_lon
         cxyz[cxyz[:,1] < self.min_lon,1] = self.min_lon
         cxyz[cxyz[:,2] > self.max_lat,2] = self.max_lat
@@ -68,14 +76,14 @@ class OutputLogger(object):
         for d in np.arange(0, self.devstages):
             if np.any(cxyz[:,0] == d):
                 # Pretty sure there is a more efficient version of this but use for now
-                for i, this_d in enumerate(data1):
-                    this_cxyz = cxyz[i,...]
+                for i, this_cxyz in enumerate(cxyz):
                     lon_ind = int(np.floor((this_cxyz[1] - self.min_lon)/ self.lon_res))
                     lat_ind = int(np.floor((this_cxyz[2] - self.min_lat)/ self.lat_res))
-                    gridded_data1[int(this_cxyz[0]), lon_ind, lat_ind, int(this_cxyz[3])] += data1[i]
-                    gridded_data2[int(this_cxyz[0]), lon_ind, lat_ind, int(this_cxyz[3])] += data2[i]
+                    
+                    for var, data in data_dict.items():
+                        gridded_data[var][int(this_cxyz[0]), lon_ind, lat_ind, int(this_cxyz[3])] += data[i]
 
-        return gridded_data1, gridded_data2
+        return gridded_data
 
     def write_spatial(self):
         #file1: space-, time-, and tage-specific population size (datatype = np.int32)
@@ -124,11 +132,8 @@ class OutputLogger(object):
         timevar.longname = "time of year in 6h intervals"
         timevar[:] = self.output_grid['time']
 
-        populationsize_ds = self._write_4d_var(populationsize_ds, "popsize", self.spatial_population_size, attributes = {"units":"no. of individuals", 
-                "longname":"estimated stage-, time- and space-specific population size of Calanus finmarchicus"})
-
-        populationsize_ds = self._write_4d_var(populationsize_ds, "biomass", self.spatial_biomass, attributes = {"units":"gC",
-                "longname":"estimated stage-, time- and space-specific biomass of Calanus finmarchicus"})
+        for var, atts in self.spatial_atts.items():
+            populationsize_ds = self._write_4d_var(populationsize_ds, var, self.spatial_output[var], attributes = atts)
         
         populationsize_ds.close()
 

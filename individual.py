@@ -20,9 +20,9 @@ import termcolor
 from time import sleep
 from time import gmtime, strftime
 from datetime import datetime
-import pascalv4_mod_verticalmigration as vm
-import pascalv4_mod_growthanddevelopment as gd
-import pascalv4_mod_survival as sv
+import pascalv40_mod_verticalmigration as vm
+import pascalv40_mod_growthanddevelopment as gd
+import pascalv40_mod_survival as sv
 
 class dotdict(dict):
     """dot.notation access to dictionary attributes"""
