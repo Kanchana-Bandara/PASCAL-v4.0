@@ -34,6 +34,9 @@ class SuperIndividual(object):
     def __init__(self, global_settings, diapausedepth, environment, environment_profiles, environment_index, eggmass=0.23, nindividuals=10000, genes=None, cxthreshold=0.7, muthreshold=0.2, datalogger=None):
         #these are reflective of individual states and vary during the lifespan of super individuals depending on the individual-environment interactions and internal processes (e.g., hardcoded strategies)
         self.global_settings = global_settings
+        if 'stochastic' not in self.global_settings.keys():
+            self.global_settings['stochastic'] = True
+
         self.eggmass = eggmass
 
         #defines the living (1) or dead (0) state of super individuals
@@ -98,8 +101,10 @@ class SuperIndividual(object):
 #all evolvable attributes range from 0 - 1 in floating point designation
         #defines the body size trajectory that a super individual follows during its lifespan
         #nb: pascalv4 does not support p2sensitivity or p2reactivity attributes - these can be included in future developments
-        if genes == None:
+        if genes == None and self.global_settings['stochastic']:
             genes = np.random.rand(8)
+        elif genes == None:
+            genes = np.ones(8) * 0.5
 
         self.genome = dotdict({'a1_bodysize':genes[0],
                               'a2_irradiancesensitivity':genes[1], #defines the spectral sensitivity of a given super individual
