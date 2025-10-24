@@ -326,10 +326,10 @@ class SuperIndividual(object):
 
         elif self.sex == "F":
             #femaless: feed, but no somatic growth - all energy accumulation is channelled to egg production
-
+            eggproductionstate = 0
             #growth, development and metabolism
             currentgrowthrate = self.apply_dsc2_growthdevel(maxdistance=maxdistance, traveldistance=traveldistance)
-
+            
             #reserve allocation
             if currentgrowthrate >= 0.00:
                 if self.structuralmass < self.adultsize:
@@ -366,7 +366,6 @@ class SuperIndividual(object):
 
             #reproduction and spawning - in the coupler/individual vesrion the inseminationstate == 0 part is handled in the coupler
             if self.inseminationstate==1:
-
                 if eggproductionstate == 1 and self.reproductiveallocation >= self.eggmass:
                     self.potentialfecundity = int(self.reproductiveallocation // self.eggmass)
                     self.totalfecundity += self.potentialfecundity # Used for killing off if fecundity ceiling reached
