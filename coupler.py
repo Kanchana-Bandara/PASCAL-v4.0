@@ -6,6 +6,7 @@ from pascal_drift import PascalDrift
 
 import datetime as dt
 import numpy as np
+import pandas as pd
 import termcolor
 import sys
 from time import sleep
@@ -20,8 +21,21 @@ class dotdict(dict): # Move to utils
 def flatten_list(xss): # Move to utils
     return [x for xs in xss for x in xs]
 
+def flatten_dict(data): # Move to utils
+    records = []
+    for key, value in data.items():
+        flat = {'key': key} 
+        for k, v in value.items():
+            if isinstance(v, dict):
+                for subk, subv in v.items():
+                    flat[f'{k}_{subk}'] = subv
+            else:
+                flat[k] = v
+        records.append(flat)
+    return records
+
 class PascalSimulation(object):
-    def __init__(self, nsupindividuals, nvindividualspersupindividual, global_settings, reader, timestep, start_date, duration, seeding_rate, diapause_depth = 500, outputgrid=None, debug=None, opendriftoutfile=None):
+    def __init__(self, nsupindividuals, nvindividualspersupindividual, global_settings, reader, timestep, start_date, duration, seeding_rate, diapause_depth = 500, outputgrid=None, debug=None, opendriftoutfile=None, verbose=False):
         print("")
         termcolor.cprint(text = "Pan-Arctic Behavioural and Life-history Simulator for Calanus, PASCAL version 4.00", color = "cyan")
         termcolor.cprint(text = "Kanchana Bandara et al. | NFR Migratory Crossroads 2024-2027", color = "cyan")
@@ -68,31 +82,36 @@ class PascalSimulation(object):
             for this_var in self.debug:
                 self.debug_output[this_var] = []
 
+        self.individual_stats = {}
+        self.next_unique_id = 0
+
+        self.verbose = verbose
+
     def run(self):
         termcolor.cprint(text = "[SIMULATION IN PROGRESS]", color = "light_red")
 
         # Setup initial individuals
         self.seed(self.seeding_rate)
 
-        try:
-            for this_step in self.all_steps:
-                self.update_environment()
-                self.update_lifestage()
-                # Maybe some of these happen at a slower timestep
-                self.log_spatial()
-                self.gene_hunt()
-                self.clean_dead() # Need to add to log file, reorder superindividual dictionary and sort environment index(?) 
-                self.respawn()
-                if self.current_time.day == 1 and self.current_time.hour == 0 and self.current_time.minute == 0:
-                    self.report()
+        #try:
+        for this_step in self.all_steps:
+            self.update_environment()
+            self.update_lifestage()
+            # Maybe some of these happen at a slower timestep
+            self.log_spatial()
+            self.gene_hunt()
+            self.clean_dead() # Need to add to log file, reorder superindividual dictionary and sort environment index(?) 
+            self.respawn()
+            if self.current_time.day == 1 and self.current_time.hour == 0 and self.current_time.minute == 0:
+                self.report()
 
-                if self.debug is not None:
-                    self.debug_out()
+            if self.debug is not None:
+                self.debug_out()
 
-                # Increment datetime
-                self.current_time += self.timestep
-        except:
-            print('Error!')
+            # Increment datetime
+            self.current_time += self.timestep
+        #except:
+        #   print('Error!')
 
         # Tidy up
         self.finish_run()
@@ -104,48 +123,71 @@ class PascalSimulation(object):
                 this_individual.update_lifestage()
 
     def log_spatial(self):
-        spatial_data = np.asarray([si.get_spatial_log_data() for si in self.active_supindividuals()]) #[col, self.zidx, self.nvindividuals, self.structuralmass + self.reservemass] 
-        cxyz = np.stack([spatial_data[:,0], self.tracker.elements.lon[self.environment_indices()], self.tracker.elements.lat[self.environment_indices()], spatial_data[:,1]]).T
-        self.datalogger.log_spatial(cxyz, {'population_size':spatial_data[:,2], 'biomass':spatial_data[:,3]})
+        varlist = self.datalogger.spatial_var_list
+        data_dict = {}
+        for this_var in varlist:
+            data_dict[this_var] = []
+
+        c = []
+        z = []
+
+        for si in self.active_supindividuals():
+            c_add,z_add,d_add = si.get_spatial_log_data(self.datalogger.spatial_var_list)
+            c.append(c_add)
+            z.append(z_add)
+            for k,v in data_dict.items():
+                v.append(d_add[k])
+
+        for k,v in data_dict.items():
+            data_dict[k] = np.asarray(v)
+            
+        cxyz = np.stack([np.asarray(c), self.tracker.elements.lon[self.environment_indices()], self.tracker.elements.lat[self.environment_indices()], np.asarray(z)]).T
+
+        self.datalogger.log_spatial(cxyz, data_dict)
 
     def respawn(self):
         nspaces = np.sum(np.asarray(self.supindividuals) == None)
-        if nspaces == 0:
-            # If nspaces is 0 realised and potential fecundity should go to 0
-            for si in self.supindividuals:
-                if si is not None:
-                    si.potentialfecundity = 0
-                    si.realisedfecundity = 0
-        else:
-            nseeds = self.seeding_rate if self.current_time.year == self.start_time.year else 0 # Does this need to cover the first year in duration in case a run doesn't start Jan 1st?
-            #nspawns = reduce(lambda x,y : x + y, [si.potentialfecundity for si in np.asarray(self.supindividuals)[self.active]]) # Not sure how slow the list comprehension below is; could do this first and only get genome if nspawns > 0
-            
-            inherited_genome = flatten_list([[si.get_child_genome() for k in np.arange(0,si.potentialfecundity)] for si in self.active_supindividuals()])
+        if nspaces > 0: # Skip if there ain't no space
+            nseeds = self.seeding_rate if self.current_time.year == self.start_time.year else 0
+            inherited_genome = flatten_list([[si.get_child_genome() for k in np.arange(0,si.potentialfecundity)] for si in self.active_supindividuals()]) # The blendrn/threshold sprocess is individual based
             nspawns = len(inherited_genome)
 
-            if nspawns + nseeds <= nspaces:
-                self.seed(nseeds, genome=None)
-                self.seed(nspawns, genome=inherited_genome)
+            # This writes out the logic from the decision tree, could probably be simplified but might reduce readibility
+            if nseeds > 0 and nspawns > 0:
+                if nspawns + nseeds <= nspaces:
+                    self.seed(nseeds, genome=None)
+                    self.seed(nspawns, genome=inherited_genome)
+                    if self.verbose:
+                        print(f'__respawn__ Seeding {nseeds} and spawning {nspawns}')
+                else:
+                    if nspaces > nspawns:
+                        self.seed(nspawns, genome=inherited_genome)
+                        if self.verbose:
+                            print(f'__respawn__ Spawning {nspawns}')
+                    else:
+                        adjusted_genome = self.fecundity_proportional_selection(nspawns)
+                        self.seed(nspaces, genome=adjusted_genome)
+                        if self.verbose:
+                            print(f'__respawn__ Spawning {len(adjusted_genome)} through fecundity proportional selection')
 
-            else: #nseeds is now implicitly 0 for this iteration but should it be zeroed for the rest of this year?
-
+            elif nspawns > 0 and nseeds == 0:
                 if nspaces > nspawns:
                     self.seed(nspawns, genome=inherited_genome)
                 else:
-                    # not enough spaces so females compete for egg-placement via a fecundity-proportional selection process
+                    adjusted_genome = self.fecundity_proportional_selection(nspawns)
+                    if self.verbose:
+                        print(f'__respawn__ Spawning {len(adjusted_genome)} through fecundity proportional selection')
+                    self.seed(nspaces, genome=adjusted_genome)
 
-                    #competition for egg placement in the new generation - spawning proceeds with constraints
-                    #fecundity-proportional selection (FPS)
-                    #this writes the FPS output into the realized fecundity state variable
-                    #nb:the np.floor() is taken instead of np.round() beacuse the latter bares the risk of the nspawns (i.e., sum(realizedfecundity)) becoming higher than the available empty spaces ('nspaces')
-        
-                    # Need to fix
-                    #realizedfecundity[:, currentsubpopulation] = np.floor((potentialfecundity[:, currentsubpopulation] / nspawns) * nspaces).astype(np.int32)
-                    #realized_fecundity = 
+            elif nseeds > 0 and nspawns == 0:
+                if nspaces > nseeds:
+                    self.seed(nseeds, genome=None) # Not sure why we don't just seed all available spaces?
+                    if self.verbose:
+                        print(f'__respawn__ Seeding {nseeds}')
 
-                    adjusted_nspawn = nspaces
-                    self.seed(adjusted_nspawn, genome=inherited_genome)
-
+        # Reset potential fecundity in individuals
+        for si in self.active_supindividuals():
+            si.potentialfecundity = 0
 
     def seed(self, nseeds, environment_indices=None, genome=None):
         if nseeds > 0:
@@ -158,26 +200,62 @@ class PascalSimulation(object):
                 genome = [None for i in np.arange(0,nseeds)]
         
             for i in np.arange(0, nseeds):
-                self.supindividuals[i + firstNone] = SuperIndividual(self.global_settings, self.diapause_depth, self.tracker.environment, self.tracker.environment_profiles, environment_indices[i], nindividuals=self.ni_per_sup, genes=genome[i]) # Should diapause depth be random?
+                self.supindividuals[i + firstNone] = SuperIndividual(self.global_settings, self.diapause_depth, self.tracker.environment, self.tracker.environment_profiles, environment_indices[i], nindividuals=self.ni_per_sup, genes=genome[i], unique_id=self.next_unique_id) # Should diapause depth be random?
+                self.individual_stats[self.next_unique_id] = {'start_step':self.current_time}
+                self.next_unique_id+=1
 
+    def fecundity_proportional_selection(self, nspaces):
+        potentialfecundity = [si.potentialfecundity for si in self.active_supindividuals()]
+        nspawns = np.sum(potentialfecundity)
+        realizedfecundity = np.round(potentialfecundity / nspawns * nspaces, decimals = 0).astype(np.int32)
+        diff = nspaces - np.sum(realizedfecundity)
+
+        indices = np.argsort(potentialfecundity)
+        if diff > 0:
+            for i in range(diff):
+                realizedfecundity[indices[-(i + 1)]] += 1
+            #end for
+        elif diff < 0:
+            for i in range(abs(diff)):
+                realizedfecundity[indices[-(i + 1)]] -= 1 # remove fecundity from the botom up
+        
+        adjusted_genome = flatten_list([[si.get_child_genome() for k in np.arange(0,rf)] for si,rf in zip(self.active_supindividuals(), realizedfecundity)])
+
+        return adjusted_genome
 
     def clean_dead(self):
         remove = [j for j, si in enumerate(self.active_supindividuals()) if si.lifestatus==0] # We can use active inidivuals because Nones should always be at the end of the array
+        for i in remove:
+            self.record_lifestats(self.active_supindividuals()[i])
+
         if len(remove) > 0:
-            [self.supindividuals.pop(i) for i in remove]
+            [self.supindividuals.pop(i-j) for j,i in enumerate(remove)]
             self.supindividuals = flatten_list([self.supindividuals, [None for i in remove]])
+            if self.verbose:
+                print(f'__clean_dead__ removed {len(remove)} - {remove} si, len array {len(self.supindividuals)}')
 
     def finish_run(self):
         if self.debug is not None:
-            np.save('debug_output.npy', self.debug_output)
-        self.datalogger.write_lifestrategies()
+            np.save(f'{self.outputfolder}/debug_output.npy', self.debug_output)
+        self.write_lifestats()
         self.datalogger.write_spatial()
 
     def report(self):
         termcolor.cprint(text = f"[PROG:{f'{self.progress():.0f}':>8}%] [MO: {self.current_time.strftime('%b')[0].capitalize()}] [YR: {self.current_time.year}] [ESTIMATED POPULATION SIZE: {self.population_size()}] No si = {len(self.active_supindividuals())}")
         if self.current_time.month == 12:
             print("")
-        
+
+    def record_lifestats(self, individ):
+        self.individual_stats[individ.unique_id].update({'end_age':individ.age, 'end_individuals':individ.nvindividuals, 'sex':individ.sex, 'end_step':self.current_time, 'total_fecundity':individ.totalfecundity, 'end_stage':individ.developmentalstage, 'genes':individ.genome, 'end_structmass':individ.structuralmass, 'end_cmm':individ.get_currentcmm(), 'end_diapause_state':individ.diapausestate, 'end_diapause_strategy':individ.diapausestrategy})
+
+    def write_lifestats(self):
+        df = pd.DataFrame(flatten_dict(self.individual_stats))
+        death_cause = np.zeros(len(df))
+        death_cause[df['total_fecundity'] >= self.global_settings['fecundityceiling']] = 3
+        death_cause[df['end_age'] >= self.global_settings['ageceiling']] = 2
+        death_cause[df['end_individuals'] <= self.global_settings['virtualindividualthrehold']] = 1
+        df['death_cause'] = death_cause
+        df.to_csv(f'{self.outputfolder}/lifestats.csv')
 
     def progress(self):
         return (self.time_ind/len(self.all_steps))*100
@@ -192,8 +270,12 @@ class PascalSimulation(object):
         return [si.environment_index for si in self.active_supindividuals()]
 
     def debug_out(self):
-        for this_var in self.debug:
-            self.debug_output[this_var].append(getattr(self.supindividuals[0], this_var))
+        if self.supindividuals[0] is not None:
+            for this_var in self.debug:
+                if this_var.split('_')[0] == 'env':
+                    self.debug_output[this_var].append(self.supindividuals[0].get_zi(this_var.split('_')[1]))
+                else:
+                    self.debug_output[this_var].append(getattr(self.supindividuals[0], this_var))
             
         
 
@@ -217,8 +299,7 @@ class Pascal1D(PascalSimulation):
         init_dict['lon'] = np.asarray([0])
         init_dict['lat'] = np.asarray([0])
         self.tracker = dotdict({'environment':dotdict(init_dict), 'environment_profiles':dotdict(init_dict), 'elements':dotdict(init_dict)})
-        
-
+    
     def gene_hunt(self):
         # In 1-D all the animals are near to each other so all females are considered near to all males, therefore just pick a random male
         noninseminated_females = [i for i in self.active_supindividuals() if i.sex == 'F' and i.inseminationstate == 0]
@@ -226,8 +307,9 @@ class Pascal1D(PascalSimulation):
         
         if len(males) > 0:
             for this_f in noninseminated_females:
-                selected_male = random.choice(males)
+                selected_male = np.random.choice(males)
                 this_f.malegenome = selected_male.genome
+                this_f.inseminationstate = 1
         
 
 class PascalAdvection(PascalSimulation):

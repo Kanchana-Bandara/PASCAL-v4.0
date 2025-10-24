@@ -4,29 +4,38 @@ import pandas as pd
 import os
 import termcolor
 
-DEFAULT_SAVE = {'population_size':{"units":"no. of individuals", "longname":"estimated stage-, time- and space-specific population size of Calanus finmarchicus"},
-                'biomass':{"units":"gC", "longname":"estimated stage-, time- and space-specific biomass of Calanus finmarchicus"}}
+DEFAULT_SAVE = {'nvindividuals':{"units":"no. of individuals", "longname":"estimated stage-, time- and space-specific population size of Calanus finmarchicus"},
+                'structuralmass':{"units":"gC", "longname":"estimated stage-, time- and space-specific biomass of Calanus finmarchicus"},
+                'reservemass':{"units":"gC", "longname":"estimated stage-, time- and space-specific biomass of Calanus finmarchicus"},
+                'feedingrate':{"units":"gC", "longname":"estimated stage-, time- and space-specific biomass of Calanus finmarchicus"},
+                'egestionrate':{"units":"gC", "longname":"estimated stage-, time- and space-specific biomass of Calanus finmarchicus"},
+                'metabolicrate':{"units":"gC", "longname":"estimated stage-, time- and space-specific biomass of Calanus finmarchicus"}}
 
 class OutputLogger(object):
-
-    def __init__(self, outputfolder, total_timesteps, output_grid, devstages = 13, lifestrategies_size=[5,8], no_evolvable=8, save_spatial=DEFAULT_SAVE):
+    def __init__(self, outputfolder, total_timesteps, output_grid, devstages = 13, no_evolvable=8, save_spatial=DEFAULT_SAVE):
         # These are split by developmental stages (up to 13 with 12 (13) being female (male) at stage zz)
         self.currentsubpopulation = 'all' # At the moment not logged by subpopulation
         self.total_mass = [] 
         self.spatial_atts = save_spatial
+        self.spatial_var_list = list(save_spatial.keys())
         self.spatial_output = {}
         for save_var in save_spatial.keys():
             self.spatial_output[save_var] = []
         self.devstages = devstages
-        self.lifestrategies_size = lifestrategies_size
         self.total_timesteps = total_timesteps
         self.no_evolvable = no_evolvable
         self.output_grid = output_grid
         self.prep_grid()
 
-        # These will have columns for each of the different life strategies and a row for each timestep
-        self.lifecycle_i = np.zeros([self.total_timesteps, self.lifestrategies_size[0]])
-        self.lifecycle_f = np.zeros([self.total_timesteps, self.lifestrategies_size[1]])
+        #this logs the numbers, structural masses and reserve masses of the direct-developing super-individuals without diapause entry (decided by gene value or shallow depth)
+        #dimensions: <time> <genetic, environmental>
+        self.ddev = {'individuals':np.zeros([self.total_timesteps, 2]), 'structuralmass':np.zeros([self.total_timesteps, 2]), 'reservemass':np.zeros([self.total_timesteps, 2])}
+        #this logs the numbers, structural masses and reserve masses of diapause entries (civ, cv stages including true and active diapausing individuals)
+        #dimensions:<time> <civ, cv> <true, active>
+        self.den = {'individuals':np.zeros([self.total_timesteps, 2]), 'structuralmass':np.zeros([self.total_timesteps, 2]), 'reservemass':np.zeros([self.total_timesteps, 2])}
+        #this logs the numbers, structural masses and reserve masses of diapause entries (civ, cv stages including true and active diapausing individuals)
+        #dimensions:<time> <civ, cv> <true, active>
+        self.dex = {'individuals':np.zeros([self.total_timesteps, 2]), 'structuralmass':np.zeros([self.total_timesteps, 2]), 'reservemass':np.zeros([self.total_timesteps, 2])}
 
         # Log the changing genomes
         self.genome_log = np.zeros([self.total_timesteps, self.no_evolvable, 2])
@@ -53,12 +62,17 @@ class OutputLogger(object):
         else:
             self.lat_res = self.output_grid['lat'][1] - self.output_grid['lat'][0]
 
-    # This doesn't feel very pythonesque
-    def add_lifecycle_i(self, val, col, timestep):
-        self.lifecycle_i[timestep, col] += val
+    def add_ddev(self, data, col):
+        for var, add_data in data.items():
+            self.ddev[var][self.current_timestep, col] += add_data
 
-    def add_lifecyle_f(self, val, col, timestep):
-        self.lifecycle_f[timestep, col] += val
+    def add_den(self, data, col1, col2):
+        for var, add_data in data.items():
+            self.den[var][self.current_timestep, col1, col2] += add_data
+
+    def add_dex(self, data, col1, col2):
+        for var, add_data in data.items():
+            self.dex[var][self.current_timestep, col1, col2] += add_data
 
     def log_spatial(self, cxyz, data_dict):
         # This is done at the coupler level as it varies based on the forcing (1-D or spatially resolved)
@@ -89,7 +103,7 @@ class OutputLogger(object):
                     lat_ind = int(np.floor((this_cxyz[2] - self.min_lat)/ self.lat_res))
                     
                     for var, data in data_dict.items():
-                        gridded_data[var][int(this_cxyz[0]), lon_ind, lat_ind, int(this_cxyz[3])] += data[i]
+                        gridded_data[var][int(this_cxyz[0])-1, lon_ind, lat_ind, int(this_cxyz[3])] += data[i]
 
         return gridded_data
 
@@ -153,21 +167,9 @@ class OutputLogger(object):
         dv1[:] = self.pad_data(np.asarray(data))
         return ds
 
-    def write_lifestrategies(self):
-        lcstrategies = np.hstack(tup = (self.lifecycle_i, self.lifecycle_f), dtype = np.float32)
-        lcstrategies_pd = pd.DataFrame(data = lcstrategies,
-                                    columns = ["nddev", "nden_c4", "nden_c5", "ndex_c4", "ndex_c5", "strm_ddev", "stom_ddev", "strm_den_c4", "stom_den_c4", "strm_den_c5", "stom_den_c5", "stom_dex_civ", "stom_dex_cv"])
-
-        #auto-generated path and filename
-        txtfilename = "lifestrategies_" + "sbp_" + str(self.currentsubpopulation) + ".csv"
-        outputfile = f"{self.outputfolder}/{txtfilename}"
-
-        #writing csv
-        lcstrategies_pd.to_csv(path_or_buf = outputfile, index = True, header = True)
-
-        #file-write status print
-        termcolor.cprint(text = "[FILE WRITING COMPLETED]", color = "light_red")
-
+    def write_evolvable(self):
+        # to be implemented
+        pass
 
     def pad_data(self, data):
         target_shape =  (self.total_timesteps, self.devstages, len(self.output_grid['lon']), len(self.output_grid['lat']),
