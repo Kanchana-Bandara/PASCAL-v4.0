@@ -1,6 +1,4 @@
-#from pascal_drift import PascalDrift
 from individual import SuperIndividual
-from functools import reduce
 from data_logger import OutputLogger
 from pascal_drift import PascalDrift
 
@@ -12,8 +10,8 @@ import sys
 from time import sleep
 from time import gmtime, strftime
 
-DEFAULT_DEPTHRANGE = np.array([1, 2, 3, 4, 6, 7, 8, 10, 12, 14, 16, 19, 22, 26, 30, 
-                               35, 41, 48, 56, 66, 78, 93, 110, 131, 156, 187, 223, 
+DEFAULT_DEPTHRANGE = np.array([1, 2, 3, 4, 6, 7, 8, 10, 12, 14, 16, 19, 22, 26, 30,
+                               35, 41, 48, 56, 66, 78, 93, 110, 131, 156, 187, 223,
                                267, 319, 381, 454, 542, 644, 764, 903, 1063, 1246])
 
 
@@ -29,7 +27,7 @@ def flatten_list(xss): # Move to utils
 def flatten_dict(data): # Move to utils
     records = []
     for key, value in data.items():
-        flat = {'key': key} 
+        flat = {'key': key}
         for k, v in value.items():
             if isinstance(v, dict):
                 for subk, subv in v.items():
@@ -72,7 +70,6 @@ class PascalSimulation(object):
         self.outputfolder = input("TYPE ID HERE AND PRESS ENTER: ")
         termcolor.cprint(text="_" * 84, color="light_blue")
         print("")
-        execstarttime_rec = dt.datetime.now()
         execstarttime_prt = strftime("%Y-%m-%d %H:%M:%S", gmtime())
         termcolor.cprint(
             text=f"\nexecution started at: {execstarttime_prt} GMT",
@@ -94,7 +91,7 @@ class PascalSimulation(object):
         self.current_time = start_date
         self.timestep = timestep
 
-        total_tsteps = int((self.end_time - self.start_time)/self.timestep)        
+        total_tsteps = int((self.end_time - self.start_time)/self.timestep)
         self.all_steps = np.arange(0,total_tsteps)
 
         self.seeding_rate = seeding_rate
@@ -133,7 +130,7 @@ class PascalSimulation(object):
             self.gene_hunt()
             # Need to add to log file, reorder superindividual dictionary
             # and sort environment index(?)
-            self.clean_dead() 
+            self.clean_dead()
             self.respawn()
             if (self.current_time.day == 1 and self.current_time.hour == 0
                     and self.current_time.minute == 0):
@@ -176,7 +173,7 @@ class PascalSimulation(object):
 
         for k,v in data_dict.items():
             data_dict[k] = np.asarray(v)
-            
+
         env_indices = self.environment_indices()
         cxyz = np.stack([
             np.asarray(c),
@@ -255,12 +252,12 @@ class PascalSimulation(object):
             # Empty spaces are always shuffled to the end of the array
             # so just start from the first None
             firstNone = np.min(np.where(np.isin(self.supindividuals, None)))
-           
+
             if environment_indices is None:
                 environment_indices = np.zeros(nseeds, dtype=int)
             if genome is None:
                 genome = [None for i in np.arange(0,nseeds)]
-        
+
             for i in np.arange(0, nseeds):
                 # Should diapause depth be random?
                 self.supindividuals[i + firstNone] = SuperIndividual(
@@ -292,7 +289,6 @@ class PascalSimulation(object):
         if diff > 0:
             for i in range(diff):
                 realizedfecundity[indices[-(i + 1)]] += 1
-            #end for
         elif diff < 0:
             for i in range(abs(diff)):
                 # Remove fecundity from the bottom up
@@ -402,8 +398,6 @@ class PascalSimulation(object):
                     self.debug_output[this_var].append(
                         getattr(self.supindividuals[0], this_var)
                     )
-            
-        
 
 class Pascal1D(PascalSimulation):
     def prep_environment(self, reader):
@@ -434,7 +428,7 @@ class Pascal1D(PascalSimulation):
             'environment_profiles': dotdict(init_dict),
             'elements': dotdict(init_dict)
         })
-    
+
     def gene_hunt(self):
         # In 1-D all the animals are near to each other so all females are
         # considered near to all males, therefore just pick a random male
@@ -443,13 +437,13 @@ class Pascal1D(PascalSimulation):
             if i.sex == 'F' and i.inseminationstate == 0
         ]
         males = [i for i in self.active_supindividuals() if i.sex == 'M']
-        
+
         if len(males) > 0:
             for this_f in noninseminated_females:
                 selected_male = np.random.choice(males)
                 this_f.malegenome = selected_male.genome
                 this_f.inseminationstate = 1
-        
+
 
 class PascalAdvection(PascalSimulation):
 
@@ -501,13 +495,10 @@ class PascalAdvection(PascalSimulation):
 
         if len(males) > 0:
             for this_f in noninseminated_females:
-                selected_male = random.choice(males)
+                selected_male = np.random.choice(males)
                 this_f.malegenome = selected_male.genome
 
     def finish_run(self):
         self.tracker.run_end()
-    
+
         super(PascalAdvection, self).finish_run()
-
-
-
