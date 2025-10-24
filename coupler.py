@@ -12,6 +12,11 @@ import sys
 from time import sleep
 from time import gmtime, strftime
 
+DEFAULT_DEPTHRANGE = np.array([1, 2, 3, 4, 6, 7, 8, 10, 12, 14, 16, 19, 22, 26, 30, 
+                               35, 41, 48, 56, 66, 78, 93, 110, 131, 156, 187, 223, 
+                               267, 319, 381, 454, 542, 644, 764, 903, 1063, 1246])
+
+
 class dotdict(dict): # Move to utils
     """dot.notation access to dictionary attributes"""
     __getattr__ = dict.get
@@ -35,33 +40,57 @@ def flatten_dict(data): # Move to utils
     return records
 
 class PascalSimulation(object):
-    def __init__(self, nsupindividuals, nvindividualspersupindividual, global_settings, reader, timestep, start_date, duration, seeding_rate, diapause_depth = 500, outputgrid=None, debug=None, opendriftoutfile=None, verbose=False):
+    def __init__(
+        self, nsupindividuals, nvindividualspersupindividual,
+        global_settings, reader, timestep, start_date, duration,
+        seeding_rate, diapause_depth=500, outputgrid=None,
+        debug=None, opendriftoutfile=None, verbose=False
+    ):
         print("")
-        termcolor.cprint(text = "Pan-Arctic Behavioural and Life-history Simulator for Calanus, PASCAL version 4.00", color = "cyan")
-        termcolor.cprint(text = "Kanchana Bandara et al. | NFR Migratory Crossroads 2024-2027", color = "cyan")
-        termcolor.cprint(text = "Evaluation execution for functionality testing and debugging", color = "cyan")
-        termcolor.cprint(text = "____________________________________________________________________________________", color = "light_blue")
+        termcolor.cprint(
+            text="Pan-Arctic Behavioural and Life-history Simulator for Calanus, "
+                 "PASCAL version 4.00",
+            color="cyan"
+        )
+        termcolor.cprint(
+            text="Kanchana Bandara et al. | NFR Migratory Crossroads 2024-2027",
+            color="cyan"
+        )
+        termcolor.cprint(
+            text="Evaluation execution for functionality testing and debugging",
+            color="cyan"
+        )
+        termcolor.cprint(
+            text="_" * 84,
+            color="light_blue"
+        )
         print("")
-        termcolor.cprint(text = "enter a unique identifier for the execution (e.g., pascalv4_r001):", color = "light_red")
+        termcolor.cprint(
+            text="enter a unique identifier for the execution (e.g., pascalv4_r001):",
+            color="light_red"
+        )
         self.outputfolder = input("TYPE ID HERE AND PRESS ENTER: ")
-        termcolor.cprint(text = "____________________________________________________________________________________", color = "light_blue")
+        termcolor.cprint(text="_" * 84, color="light_blue")
         print("")
         execstarttime_rec = dt.datetime.now()
         execstarttime_prt = strftime("%Y-%m-%d %H:%M:%S", gmtime())
-        termcolor.cprint(text = f"\nexecution started at: {execstarttime_prt} GMT", color = "light_blue")
-        termcolor.cprint(text = "____________________________________________________________________________________", color = "light_blue")
+        termcolor.cprint(
+            text=f"\nexecution started at: {execstarttime_prt} GMT",
+            color="light_blue"
+        )
+        termcolor.cprint(text="_" * 84, color="light_blue")
 
         self.nsup = nsupindividuals
         self.supindividuals = [None for j in np.arange(0, nsupindividuals)]
         self.ni_per_sup = nvindividualspersupindividual
         self.global_settings = global_settings
         if 'depthrange' not in global_settings.keys():
-            self.global_settings['depthrange'] = np.array([1, 2, 3, 4, 6, 7, 8, 10, 12, 14, 16, 19, 22, 26, 30, 35, 41, 48, 56, 66, 78, 93, 110, 131, 156, 187, 223, 267, 319, 381, 454, 542, 644, 764, 903, 1063, 1246])
-
+            self.global_settings['depthrange'] = DEFAULT_DEPTHRANGE
         self.diapause_depth = diapause_depth
 
         self.start_time = start_date
-        self.end_time = start_date + dt.timedelta(days = 365*duration) # Guess this doesn't really deal with leap years...
+        # Guess this doesn't really deal with leap years...
+        self.end_time = start_date + dt.timedelta(days=365 * duration)
         self.current_time = start_date
         self.timestep = timestep
 
@@ -74,7 +103,9 @@ class PascalSimulation(object):
         self.opendriftout = opendriftoutfile
         self.prep_environment(reader)
         self.prep_outputgrid(outputgrid)
-        self.datalogger = OutputLogger(self.outputfolder, len(self.all_steps), self.outputgrid)
+        self.datalogger = OutputLogger(
+            self.outputfolder, len(self.all_steps), self.outputgrid
+        )
 
         self.debug = debug
         if self.debug is not None:
@@ -100,9 +131,12 @@ class PascalSimulation(object):
             # Maybe some of these happen at a slower timestep
             self.log_spatial()
             self.gene_hunt()
-            self.clean_dead() # Need to add to log file, reorder superindividual dictionary and sort environment index(?) 
+            # Need to add to log file, reorder superindividual dictionary
+            # and sort environment index(?)
+            self.clean_dead() 
             self.respawn()
-            if self.current_time.day == 1 and self.current_time.hour == 0 and self.current_time.minute == 0:
+            if (self.current_time.day == 1 and self.current_time.hour == 0
+                    and self.current_time.minute == 0):
                 self.report()
 
             if self.debug is not None:
@@ -132,7 +166,9 @@ class PascalSimulation(object):
         z = []
 
         for si in self.active_supindividuals():
-            c_add,z_add,d_add = si.get_spatial_log_data(self.datalogger.spatial_var_list)
+            c_add, z_add, d_add = si.get_spatial_log_data(
+                self.datalogger.spatial_var_list
+            )
             c.append(c_add)
             z.append(z_add)
             for k,v in data_dict.items():
@@ -141,18 +177,32 @@ class PascalSimulation(object):
         for k,v in data_dict.items():
             data_dict[k] = np.asarray(v)
             
-        cxyz = np.stack([np.asarray(c), self.tracker.elements.lon[self.environment_indices()], self.tracker.elements.lat[self.environment_indices()], np.asarray(z)]).T
+        env_indices = self.environment_indices()
+        cxyz = np.stack([
+            np.asarray(c),
+            self.tracker.elements.lon[env_indices],
+            self.tracker.elements.lat[env_indices],
+            np.asarray(z)
+        ]).T
 
         self.datalogger.log_spatial(cxyz, data_dict)
 
     def respawn(self):
         nspaces = np.sum(np.asarray(self.supindividuals) == None)
-        if nspaces > 0: # Skip if there ain't no space
-            nseeds = self.seeding_rate if self.current_time.year == self.start_time.year else 0
-            inherited_genome = flatten_list([[si.get_child_genome() for k in np.arange(0,si.potentialfecundity)] for si in self.active_supindividuals()]) # The blendrn/threshold sprocess is individual based
+        if nspaces > 0:  # Skip if there ain't no space
+            if self.current_time.year == self.start_time.year:
+                nseeds = self.seeding_rate
+            else:
+                nseeds = 0
+            # The blendrn/threshold process is individual based
+            inherited_genome = flatten_list([
+                [si.get_child_genome() for k in np.arange(0, si.potentialfecundity)]
+                for si in self.active_supindividuals()
+            ])
             nspawns = len(inherited_genome)
 
-            # This writes out the logic from the decision tree, could probably be simplified but might reduce readibility
+            # This writes out the logic from the decision tree, could probably
+            # be simplified but might reduce readibility
             if nseeds > 0 and nspawns > 0:
                 if nspawns + nseeds <= nspaces:
                     self.seed(nseeds, genome=None)
@@ -165,23 +215,34 @@ class PascalSimulation(object):
                         if self.verbose:
                             print(f'__respawn__ Spawning {nspawns}')
                     else:
-                        adjusted_genome = self.fecundity_proportional_selection(nspawns)
+                        adjusted_genome = self.fecundity_proportional_selection(
+                            nspawns
+                        )
                         self.seed(nspaces, genome=adjusted_genome)
                         if self.verbose:
-                            print(f'__respawn__ Spawning {len(adjusted_genome)} through fecundity proportional selection')
+                            print(
+                                f'__respawn__ Spawning {len(adjusted_genome)} '
+                                'through fecundity proportional selection'
+                            )
 
             elif nspawns > 0 and nseeds == 0:
                 if nspaces > nspawns:
                     self.seed(nspawns, genome=inherited_genome)
                 else:
-                    adjusted_genome = self.fecundity_proportional_selection(nspawns)
+                    adjusted_genome = self.fecundity_proportional_selection(
+                        nspawns
+                    )
                     if self.verbose:
-                        print(f'__respawn__ Spawning {len(adjusted_genome)} through fecundity proportional selection')
+                        print(
+                            f'__respawn__ Spawning {len(adjusted_genome)} '
+                            'through fecundity proportional selection'
+                        )
                     self.seed(nspaces, genome=adjusted_genome)
 
             elif nseeds > 0 and nspawns == 0:
                 if nspaces > nseeds:
-                    self.seed(nseeds, genome=None) # Not sure why we don't just seed all available spaces?
+                    # Not sure why we don't just seed all available spaces?
+                    self.seed(nseeds, genome=None)
                     if self.verbose:
                         print(f'__respawn__ Seeding {nseeds}')
 
@@ -191,7 +252,8 @@ class PascalSimulation(object):
 
     def seed(self, nseeds, environment_indices=None, genome=None):
         if nseeds > 0:
-            # Empty spaces are always shuffled to the end of the array so just start from the first None
+            # Empty spaces are always shuffled to the end of the array
+            # so just start from the first None
             firstNone = np.min(np.where(np.isin(self.supindividuals, None)))
            
             if environment_indices is None:
@@ -200,14 +262,30 @@ class PascalSimulation(object):
                 genome = [None for i in np.arange(0,nseeds)]
         
             for i in np.arange(0, nseeds):
-                self.supindividuals[i + firstNone] = SuperIndividual(self.global_settings, self.diapause_depth, self.tracker.environment, self.tracker.environment_profiles, environment_indices[i], nindividuals=self.ni_per_sup, genes=genome[i], unique_id=self.next_unique_id) # Should diapause depth be random?
-                self.individual_stats[self.next_unique_id] = {'start_step':self.current_time}
-                self.next_unique_id+=1
+                # Should diapause depth be random?
+                self.supindividuals[i + firstNone] = SuperIndividual(
+                    self.global_settings,
+                    self.diapause_depth,
+                    self.tracker.environment,
+                    self.tracker.environment_profiles,
+                    environment_indices[i],
+                    nindividuals=self.ni_per_sup,
+                    genes=genome[i],
+                    unique_id=self.next_unique_id
+                )
+                self.individual_stats[self.next_unique_id] = {
+                    'start_step': self.current_time
+                }
+                self.next_unique_id += 1
 
     def fecundity_proportional_selection(self, nspaces):
-        potentialfecundity = [si.potentialfecundity for si in self.active_supindividuals()]
+        potentialfecundity = [
+            si.potentialfecundity for si in self.active_supindividuals()
+        ]
         nspawns = np.sum(potentialfecundity)
-        realizedfecundity = np.round(potentialfecundity / nspawns * nspaces, decimals = 0).astype(np.int32)
+        realizedfecundity = np.round(
+            potentialfecundity / nspawns * nspaces, decimals=0
+        ).astype(np.int32)
         diff = nspaces - np.sum(realizedfecundity)
 
         indices = np.argsort(potentialfecundity)
@@ -217,22 +295,36 @@ class PascalSimulation(object):
             #end for
         elif diff < 0:
             for i in range(abs(diff)):
-                realizedfecundity[indices[-(i + 1)]] -= 1 # remove fecundity from the botom up
-        
-        adjusted_genome = flatten_list([[si.get_child_genome() for k in np.arange(0,rf)] for si,rf in zip(self.active_supindividuals(), realizedfecundity)])
+                # Remove fecundity from the bottom up
+                realizedfecundity[indices[-(i + 1)]] -= 1
+
+        adjusted_genome = flatten_list([
+            [si.get_child_genome() for k in np.arange(0, rf)]
+            for si, rf in zip(self.active_supindividuals(), realizedfecundity)
+        ])
 
         return adjusted_genome
 
     def clean_dead(self):
-        remove = [j for j, si in enumerate(self.active_supindividuals()) if si.lifestatus==0] # We can use active inidivuals because Nones should always be at the end of the array
+        # We can use active individuals because Nones should always be
+        # at the end of the array
+        remove = [
+            j for j, si in enumerate(self.active_supindividuals())
+            if si.lifestatus == 0
+        ]
         for i in remove:
             self.record_lifestats(self.active_supindividuals()[i])
 
         if len(remove) > 0:
-            [self.supindividuals.pop(i-j) for j,i in enumerate(remove)]
-            self.supindividuals = flatten_list([self.supindividuals, [None for i in remove]])
+            [self.supindividuals.pop(i - j) for j, i in enumerate(remove)]
+            self.supindividuals = flatten_list([
+                self.supindividuals, [None for i in remove]
+            ])
             if self.verbose:
-                print(f'__clean_dead__ removed {len(remove)} - {remove} si, len array {len(self.supindividuals)}')
+                print(
+                    f'__clean_dead__ removed {len(remove)} - {remove} si, '
+                    f'len array {len(self.supindividuals)}'
+                )
 
     def finish_run(self):
         if self.debug is not None:
@@ -241,19 +333,47 @@ class PascalSimulation(object):
         self.datalogger.write_spatial()
 
     def report(self):
-        termcolor.cprint(text = f"[PROG:{f'{self.progress():.0f}':>8}%] [MO: {self.current_time.strftime('%b')[0].capitalize()}] [YR: {self.current_time.year}] [ESTIMATED POPULATION SIZE: {self.population_size()}] No si = {len(self.active_supindividuals())}")
+        progress = f'{self.progress():.0f}'
+        month = self.current_time.strftime('%b')[0].capitalize()
+        year = self.current_time.year
+        pop_size = self.population_size()
+        n_si = len(self.active_supindividuals())
+        termcolor.cprint(
+            text=f"[PROG:{progress:>8}%] [MO: {month}] [YR: {year}] "
+                 f"[ESTIMATED POPULATION SIZE: {pop_size}] No si = {n_si}"
+        )
         if self.current_time.month == 12:
             print("")
 
     def record_lifestats(self, individ):
-        self.individual_stats[individ.unique_id].update({'end_age':individ.age, 'end_individuals':individ.nvindividuals, 'sex':individ.sex, 'end_step':self.current_time, 'total_fecundity':individ.totalfecundity, 'end_stage':individ.developmentalstage, 'genes':individ.genome, 'end_structmass':individ.structuralmass, 'end_cmm':individ.get_currentcmm(), 'end_diapause_state':individ.diapausestate, 'end_diapause_strategy':individ.diapausestrategy})
+        self.individual_stats[individ.unique_id].update({
+            'end_age': individ.age,
+            'end_individuals': individ.nvindividuals,
+            'sex': individ.sex,
+            'end_step': self.current_time,
+            'total_fecundity': individ.totalfecundity,
+            'end_stage': individ.developmentalstage,
+            'genes': individ.genome,
+            'end_structmass': individ.structuralmass,
+            'end_cmm': individ.get_currentcmm(),
+            'end_diapause_state': individ.diapausestate,
+            'end_diapause_strategy': individ.diapausestrategy
+        })
 
     def write_lifestats(self):
         df = pd.DataFrame(flatten_dict(self.individual_stats))
         death_cause = np.zeros(len(df))
-        death_cause[df['total_fecundity'] >= self.global_settings['fecundityceiling']] = 3
-        death_cause[df['end_age'] >= self.global_settings['ageceiling']] = 2
-        death_cause[df['end_individuals'] <= self.global_settings['virtualindividualthrehold']] = 1
+        fecundity_mask = (
+            df['total_fecundity'] >= self.global_settings['fecundityceiling']
+        )
+        death_cause[fecundity_mask] = 3
+        age_mask = df['end_age'] >= self.global_settings['ageceiling']
+        death_cause[age_mask] = 2
+        threshold_mask = (
+            df['end_individuals'] <=
+            self.global_settings['virtualindividualthrehold']
+        )
+        death_cause[threshold_mask] = 1
         df['death_cause'] = death_cause
         df.to_csv(f'{self.outputfolder}/lifestats.csv')
 
@@ -264,7 +384,8 @@ class PascalSimulation(object):
         return np.sum([si.nvindividuals for si in self.active_supindividuals()])
 
     def active_supindividuals(self):
-        return np.asarray(self.supindividuals)[~np.isin(self.supindividuals, None)]
+        mask = ~np.isin(self.supindividuals, None)
+        return np.asarray(self.supindividuals)[mask]
 
     def environment_indices(self):
         return [si.environment_index for si in self.active_supindividuals()]
@@ -273,9 +394,14 @@ class PascalSimulation(object):
         if self.supindividuals[0] is not None:
             for this_var in self.debug:
                 if this_var.split('_')[0] == 'env':
-                    self.debug_output[this_var].append(self.supindividuals[0].get_zi(this_var.split('_')[1]))
+                    var_name = this_var.split('_')[1]
+                    self.debug_output[this_var].append(
+                        self.supindividuals[0].get_zi(var_name)
+                    )
                 else:
-                    self.debug_output[this_var].append(getattr(self.supindividuals[0], this_var))
+                    self.debug_output[this_var].append(
+                        getattr(self.supindividuals[0], this_var)
+                    )
             
         
 
@@ -286,7 +412,12 @@ class Pascal1D(PascalSimulation):
         self.update_environment()
 
     def prep_outputgrid(self, outputgrid):
-        self.outputgrid = {'lon':[0], 'lat':[0], 'depth':self.global_settings['depthrange'], 'time':self.all_steps}
+        self.outputgrid = {
+            'lon': [0],
+            'lat': [0],
+            'depth': self.global_settings['depthrange'],
+            'time': self.all_steps
+        }
 
     def update_environment(self):
         self.time_ind+= 1
@@ -298,11 +429,19 @@ class Pascal1D(PascalSimulation):
                 init_dict[k] = v[self.time_ind,...]
         init_dict['lon'] = np.asarray([0])
         init_dict['lat'] = np.asarray([0])
-        self.tracker = dotdict({'environment':dotdict(init_dict), 'environment_profiles':dotdict(init_dict), 'elements':dotdict(init_dict)})
+        self.tracker = dotdict({
+            'environment': dotdict(init_dict),
+            'environment_profiles': dotdict(init_dict),
+            'elements': dotdict(init_dict)
+        })
     
     def gene_hunt(self):
-        # In 1-D all the animals are near to each other so all females are considered near to all males, therefore just pick a random male
-        noninseminated_females = [i for i in self.active_supindividuals() if i.sex == 'F' and i.inseminationstate == 0]
+        # In 1-D all the animals are near to each other so all females are
+        # considered near to all males, therefore just pick a random male
+        noninseminated_females = [
+            i for i in self.active_supindividuals()
+            if i.sex == 'F' and i.inseminationstate == 0
+        ]
         males = [i for i in self.active_supindividuals() if i.sex == 'M']
         
         if len(males) > 0:
@@ -319,17 +458,26 @@ class PascalAdvection(PascalSimulation):
         self.tracker = PascalDrift(loglevel=100)
         self.tracker.add_reader(reader)
         self.tracker.set_config('general:use_auto_landmask', False)
-        self.tracker.set_config('vertical_mixing:diffusivitymodel', 'windspeed_Sundby1983')
-        self.tracker.seed_elements(lon=3, lat=60.5, z=-10, number=self.nsup, radius=30000, time=self.start_time - self.timestep) # Need to change start times to fit sequential seeding in original pascal
-        self.tracker.run_prep(time_step=self.timestep.seconds,
-                steps=None,
-                time_step_output=None,
-                duration=None,
-                end_time=self.end_time,
-                stop_on_error=True,
-                outfile=self.opendriftout,
-                export_variables=['x', 'y', 'temperature'])
-        self.tracker.run_1step() # Need this to populate the environment
+        self.tracker.set_config(
+            'vertical_mixing:diffusivitymodel', 'windspeed_Sundby1983'
+        )
+        # Need to change start times to fit sequential seeding in original pascal
+        self.tracker.seed_elements(
+            lon=3, lat=60.5, z=-10, number=self.nsup, radius=30000,
+            time=self.start_time - self.timestep
+        )
+        self.tracker.run_prep(
+            time_step=self.timestep.seconds,
+            steps=None,
+            time_step_output=None,
+            duration=None,
+            end_time=self.end_time,
+            stop_on_error=True,
+            outfile=self.opendriftout,
+            export_variables=['x', 'y', 'temperature']
+        )
+        # Need this to populate the environment
+        self.tracker.run_1step()
 
     def prep_outputgrid(self, outputgrid):
         outputgrid['time'] = self.all_steps
@@ -341,10 +489,14 @@ class PascalAdvection(PascalSimulation):
         self.tracker.run_1step()
 
     def gene_hunt(self):
-        #!!!!!!! Temporary code !!!!!!!!!
-        # This just applies from any male, but should do a search for a max distance first. This should be fairly straightforward with
+        # !!!!!!! Temporary code !!!!!!!!!
+        # This just applies from any male, but should do a search for a max
+        # distance first. This should be fairly straightforward with
         # self.tracer.elements['x'] (/y) and then a self.max_dist
-        noninseminated_females = [i for i in self.active_supindividuals() if i.sex == 'F' and i.inseminationstate == 0]
+        noninseminated_females = [
+            i for i in self.active_supindividuals()
+            if i.sex == 'F' and i.inseminationstate == 0
+        ]
         males = [i for i in self.active_supindividuals() if i.sex == 'M']
 
         if len(males) > 0:
