@@ -7,19 +7,10 @@
 #evaluation file on linux mint
 
 #modules
-#=========================================================================================================================================================================================================================================================
-import sys
+#==========================================================================
 import math
-import os
 import numpy as np
-import pandas as pd
-import pathlib
-import netCDF4 as nc
-#from tqdm import tqdm
-import termcolor
-from time import sleep
-from time import gmtime, strftime
-from datetime import datetime
+
 import pascal42_mod_verticalmigration as vm
 import pascal42_mod_growthdevelopmentmetabolism as gdm
 import pascal42_mod_survival as sv
