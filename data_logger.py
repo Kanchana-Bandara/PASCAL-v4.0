@@ -1,8 +1,6 @@
 import numpy as np
 import netCDF4 as nc
-import pandas as pd
 import os
-import termcolor
 
 DEFAULT_SAVE = {'nvindividuals':{"units":"no. of individuals", "longname":"estimated stage-, time- and space-specific population size of Calanus finmarchicus"},
                 'structuralmass':{"units":"gC", "longname":"estimated stage-, time- and space-specific biomass of Calanus finmarchicus"},
@@ -121,13 +119,6 @@ class OutputLogger(object):
         populationsize_ds.project = "NFR Migratory Crossroads"
         populationsize_ds.author = "Kanchana Bandra"
         populationsize_ds.warning = "evaluation output - do not use for analyses"
-
-        #creating dataset dimensions
-        stagedim = populationsize_ds.createDimension("devstage", self.devstages)
-        londim = populationsize_ds.createDimension("lon", len(self.output_grid['lon']))
-        latdim = populationsize_ds.createDimension("lat", len(self.output_grid['lat']))
-        depthdim = populationsize_ds.createDimension("depth", len(self.output_grid['depth']))
-        timedim = populationsize_ds.createDimension("time", self.total_timesteps)
 
         #creating dimensionality variabels & data variables
         stagevar = populationsize_ds.createVariable("devstage", np.int32, ("devstage", ))
