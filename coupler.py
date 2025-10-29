@@ -1,3 +1,4 @@
+from math import e
 from individual import SuperIndividual
 from data_logger import OutputLogger
 from pascal_drift import PascalDrift
@@ -19,7 +20,8 @@ class PascalSimulation(object):
         self, nsupindividuals, nvindividualspersupindividual,
         global_settings, reader, timestep, start_date, duration,
         seeding_rate, timestep_isplit=1, diapause_depth=500, outputgrid=None,
-        debug=None, opendriftoutfile=None, verbose=False
+        debug=None, opendriftoutfile=None, verbose=False, start_locations=None,
+        tracker_config=None
     ):
         print("")
         termcolor.cprint(
@@ -80,8 +82,16 @@ class PascalSimulation(object):
         self.seeding_rate = seeding_rate
 
         # Setup the environment, logger, and the super individuals
+        if start_locations is None:
+            start_locations = [[0,0]]
+        elif isinstance(start_locations, np.ndarray):
+            start_locations = [tuple(loc) for loc in start_locations]
+
+        self.start_locations = start_locations
         self.opendriftout = opendriftoutfile
+        self.tracker_config = tracker_config
         self.prep_environment(reader)
+
         self.prep_outputgrid(outputgrid)
         self.datalogger = OutputLogger(
             self.outputfolder, len(self.all_steps), self.outputgrid
@@ -102,7 +112,12 @@ class PascalSimulation(object):
         termcolor.cprint(text = "[SIMULATION IN PROGRESS]", color = "light_red")
 
         # Setup initial individuals
-        self.seed(self.seeding_rate)
+        seed_locations_ind = np.random.choice(len(self.start_locations), 
+                    size=self.seeding_rate, 
+                    replace=True
+                )
+        seed_locations = [self.start_locations[i] for i in seed_locations_ind]      
+        self.seed(self.seeding_rate, seed_locations, genome=None)
 
         for this_step in self.all_steps:
             self.update_environment()
@@ -124,7 +139,6 @@ class PascalSimulation(object):
 
         # Tidy up
         self.finish_run()
-
 
     def update_lifestage(self):
         for this_individual in self.supindividuals:
@@ -163,10 +177,15 @@ class PascalSimulation(object):
         self.datalogger.log_spatial(cxyz, data_dict)
 
     def respawn(self):
-        nspaces = np.sum(np.asarray(self.supindividuals) is None)
+        nspaces = np.sum(np.asarray(self.supindividuals) == None)
         if nspaces > 0:  # Skip if there ain't no space
             if self.current_time.year == self.start_time.year:
                 nseeds = self.seeding_rate
+                seed_locations_ind = np.random.choice(len(self.start_locations), 
+                    size=nseeds, 
+                    replace=True
+                )
+                seed_locations = [self.start_locations[i] for i in seed_locations_ind]
             else:
                 nseeds = 0
             # The blendrn/threshold process is individual based
@@ -174,26 +193,33 @@ class PascalSimulation(object):
                 [si.get_child_genome() for k in np.arange(0, si.potentialfecundity)]
                 for si in self.active_supindividuals()
             ])
+            inherited_locations = flatten_list([
+                [self.tracker.elements.lon[si.environment_index],
+                 self.tracker.elements.lat[si.environment_index]]
+                for si in self.active_supindividuals()
+                for k in np.arange(0, si.potentialfecundity)
+            ])
+
             nspawns = len(inherited_genome)
 
             # This writes out the logic from the decision tree, could probably
             # be simplified but might reduce readibility
             if nseeds > 0 and nspawns > 0:
                 if nspawns + nseeds <= nspaces:
-                    self.seed(nseeds, genome=None)
-                    self.seed(nspawns, genome=inherited_genome)
+                    self.seed(nseeds, seed_locations, genome=None)
+                    self.seed(nspawns, inherited_locations, genome=inherited_genome)
                     if self.verbose:
                         print(f'__respawn__ Seeding {nseeds} and spawning {nspawns}')
                 else:
                     if nspaces > nspawns:
-                        self.seed(nspawns, genome=inherited_genome)
+                        self.seed(nspawns, inherited_locations, genome=inherited_genome)
                         if self.verbose:
                             print(f'__respawn__ Spawning {nspawns}')
                     else:
-                        adjusted_genome = self.fecundity_proportional_selection(
+                        adjusted_genome, adjusted_locations = self.fecundity_proportional_selection(
                             nspawns
                         )
-                        self.seed(nspaces, genome=adjusted_genome)
+                        self.seed(nspaces, adjusted_locations, genome=adjusted_genome)
                         if self.verbose:
                             print(
                                 f'__respawn__ Spawning {len(adjusted_genome)} '
@@ -202,9 +228,9 @@ class PascalSimulation(object):
 
             elif nspawns > 0 and nseeds == 0:
                 if nspaces > nspawns:
-                    self.seed(nspawns, genome=inherited_genome)
+                    self.seed(nspawns, inherited_locations, genome=inherited_genome)
                 else:
-                    adjusted_genome = self.fecundity_proportional_selection(
+                    adjusted_genome, adjusted_locations = self.fecundity_proportional_selection(
                         nspawns
                     )
                     if self.verbose:
@@ -212,12 +238,12 @@ class PascalSimulation(object):
                             f'__respawn__ Spawning {len(adjusted_genome)} '
                             'through fecundity proportional selection'
                         )
-                    self.seed(nspaces, genome=adjusted_genome)
+                    self.seed(nspaces, adjusted_locations, genome=adjusted_genome)
 
             elif nseeds > 0 and nspawns == 0:
                 if nspaces > nseeds:
                     # Not sure why we don't just seed all available spaces?
-                    self.seed(nseeds, genome=None)
+                    self.seed(nseeds, seed_locations, genome=None)
                     if self.verbose:
                         print(f'__respawn__ Seeding {nseeds}')
 
@@ -225,33 +251,33 @@ class PascalSimulation(object):
         for si in self.active_supindividuals():
             si.potentialfecundity = 0
 
-    def seed(self, nseeds, environment_indices=None, genome=None):
-        if nseeds > 0:
-            # Empty spaces are always shuffled to the end of the array
-            # so just start from the first None
-            firstNone = np.min(np.where(np.isin(self.supindividuals, None)))
+    def seed(self, nseeds, locations, genome=None):
+        # Empty spaces are always shuffled to the end of the array
+        # so just start from the first None
+        firstNone = np.min(np.where(np.isin(self.supindividuals, None)))
 
-            if environment_indices is None:
-                environment_indices = np.zeros(nseeds, dtype=int)
-            if genome is None:
-                genome = [None for i in np.arange(0,nseeds)]
+        if genome is None:
+            genome = [None for i in np.arange(0,nseeds)]
 
-            for i in np.arange(0, nseeds):
-                # Should diapause depth be random?
-                self.supindividuals[i + firstNone] = SuperIndividual(
-                    self.global_settings,
-                    self.diapause_depth,
-                    self.tracker.environment,
-                    self.tracker.environment_profiles,
-                    environment_indices[i],
-                    nindividuals=self.ni_per_sup,
-                    genes=genome[i],
-                    unique_id=self.next_unique_id
-                )
-                self.individual_stats[self.next_unique_id] = {
-                    'start_step': self.current_time
-                }
-                self.next_unique_id += 1
+        for i in np.arange(0, nseeds):
+            environment_index = self.free_env_indices.pop(0)
+            self.set_tracker(environment_index, locations[i])
+
+            # Should diapause depth be random?
+            self.supindividuals[i + firstNone] = SuperIndividual(
+                self.global_settings,
+                self.diapause_depth,
+                self.tracker.environment,
+                self.tracker.environment_profiles,
+                environment_index,
+                nindividuals=self.ni_per_sup,
+                genes=genome[i],
+                unique_id=self.next_unique_id
+            )
+            self.individual_stats[self.next_unique_id] = {
+                'start_step': self.current_time
+            }
+            self.next_unique_id += 1
 
     def fecundity_proportional_selection(self, nspaces):
         potentialfecundity = [
@@ -277,7 +303,14 @@ class PascalSimulation(object):
             for si, rf in zip(self.active_supindividuals(), realizedfecundity)
         ])
 
-        return adjusted_genome
+        adjusted_locations = flatten_list([
+            [self.tracker.elements.lon[si.environment_index],
+             self.tracker.elements.lat[si.environment_index]]
+            for si, rf in zip(self.active_supindividuals(), realizedfecundity)
+            for k in np.arange(0, rf)
+        ])
+
+        return adjusted_genome, adjusted_locations
 
     def clean_dead(self):
         # We can use active individuals because Nones should always be
@@ -288,6 +321,10 @@ class PascalSimulation(object):
         ]
         for i in remove:
             self.record_lifestats(self.active_supindividuals()[i])
+
+        # Keep track of free slots in the particle tracker
+        for i in remove:
+            self.free_env_indices.append(self.active_supindividuals()[i].environment_index)
 
         if len(remove) > 0:
             [self.supindividuals.pop(i - j) for j, i in enumerate(remove)]
@@ -378,7 +415,9 @@ class PascalSimulation(object):
                     )
 
 class Pascal1D(PascalSimulation):
+
     def prep_environment(self, reader):
+        self.free_env_indices = list(np.zeros(self.nsup, dtype=int))
         self.all_data = reader
         self.time_ind = -1
         self.update_environment()
@@ -407,6 +446,9 @@ class Pascal1D(PascalSimulation):
             'elements': dotdict(init_dict)
         })
     
+    def set_tracker(self, environment_index, location):
+        pass
+
     def gene_hunt(self):
         # In 1-D all the animals are near to each other so all females are
         # considered near to all males, therefore just pick a random male
@@ -426,20 +468,26 @@ class Pascal1D(PascalSimulation):
 class PascalAdvection(PascalSimulation):
 
     def prep_environment(self, reader):
+        self.free_env_indices = list(np.arange(0, self.nsup))
         self.time_ind = 0
         self.tracker = PascalDrift(loglevel=100)
-        self.tracker.add_reader(reader)
-        self.tracker.set_config('general:use_auto_landmask', False)
-        self.tracker.set_config(
-            'vertical_mixing:diffusivitymodel', 'windspeed_Sundby1983'
-        )
-        # Need to change start times to fit sequential seeding in original pascal
+        if isinstance(reader, (list, tuple)):
+            for r in reader:
+                self.tracker.add_reader(r)
+        else:
+            self.tracker.add_reader(reader)
+
+        if self.tracker_config is not None:
+            for k,v in self.tracker_config.items():
+                self.tracker.set_config(k, v)
+       
+        start_loc = self.start_locations[0]
         self.tracker.seed_elements(
-            lon=3, lat=60.5, z=-10, number=self.nsup, radius=30000,
-            time=self.start_time - self.timestep
-        )
+                lon=start_loc[0], lat=start_loc[1], z=-10, number=self.nsup, radius=10,
+                time=self.start_time - self.timestep
+            )
         self.tracker.run_prep(
-            time_step=self.timestep.seconds,
+            time_step=self.timestep.seconds*self.isplit,
             steps=None,
             time_step_output=None,
             duration=None,
@@ -455,6 +503,10 @@ class PascalAdvection(PascalSimulation):
         outputgrid['time'] = self.all_steps
         outputgrid['depth'] = self.global_settings['depthrange']
         self.outputgrid = outputgrid
+
+    def set_tracker(self, environment_index, location):
+        self.tracker.elements.lon[environment_index] = location[0]
+        self.tracker.elements.lat[environment_index] = location[1]
 
     def update_environment(self):
         self.time_ind+= 1
