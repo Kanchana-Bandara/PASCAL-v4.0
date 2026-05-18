@@ -120,6 +120,13 @@ class OutputLogger(object):
         populationsize_ds.author = "Kanchana Bandra"
         populationsize_ds.warning = "evaluation output - do not use for analyses"
 
+        #creating dataset dimensions
+        stagedim = populationsize_ds.createDimension("devstage", self.devstages)
+        londim = populationsize_ds.createDimension("lon", len(self.output_grid['lon']))
+        latdim = populationsize_ds.createDimension("lat", len(self.output_grid['lat']))
+        depthdim = populationsize_ds.createDimension("depth", len(self.output_grid['depth']))
+        timedim = populationsize_ds.createDimension("time", self.total_timesteps)
+        
         #creating dimensionality variabels & data variables
         stagevar = populationsize_ds.createVariable("devstage", np.int32, ("devstage", ))
         stagevar.units = "dim.less"
