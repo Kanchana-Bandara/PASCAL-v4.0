@@ -1,4 +1,4 @@
-def verticalmigration_dsc0(smld: int, maxdepth: int, mindepth: int, depthrange: int, continuousdepth: bool) -> int:
+def verticalmigration_dsc0(smld: int, maxdepth: int, mindepth: int, depthrange: int, continuousdepth: bool, stochastic: bool=True) -> int:
 
     """
     functionality:
@@ -34,7 +34,11 @@ def verticalmigration_dsc0(smld: int, maxdepth: int, mindepth: int, depthrange: 
 
     else:
 
-        zsel = np.random.randint(low = mindepth, high = smld, size = 1).squeeze().item()
+        if stochastic:
+            zsel = np.random.randint(low = mindepth, high = smld, size = 1).squeeze().item()
+        else:
+            zsel = np.floor(smld - mindepth)
+
         zidx = zsel - 1 if continuousdepth else np.argmin(np.abs(depthrange - zsel)).item()
         zpos = depthrange[zidx]
 
@@ -311,7 +315,7 @@ def verticalmigration_dsc2(temprange: float, fconrange: float, iradrange: float,
 
 #end def
 
-def diapausedepthselection(maxdepth: int, ddt0: int, ddt1: int, ddt2: int, depthrange: int, continuousdepth: bool) -> int:
+def diapausedepthselection(maxdepth: int, ddt0: int, ddt1: int, ddt2: int, depthrange: int, continuousdepth: bool, stochastic: bool=True) -> int:
 
     """
     functionality:
@@ -349,12 +353,19 @@ def diapausedepthselection(maxdepth: int, ddt0: int, ddt1: int, ddt2: int, depth
             diapausedepthfloor = ddt2 - 200
         
             #randomizing diapause depth ceiling and floor values
-            diapausedepthvar = np.random.randint(low = 0, high = 100, size = 1).squeeze().item()
-            diapausedepthopr = np.random.randint(low = 0, high = 2, size = 1).squeeze().item()
+            if stochastic:
+                diapausedepthvar = np.random.randint(low = 0, high = 100, size = 1).squeeze().item()
+                diapausedepthopr = np.random.randint(low = 0, high = 2, size = 1).squeeze().item()
+            else:
+                diapausedepthvar = 50
+                diapausedepthopr = 1
+            
             diapausedepthceiling = diapausedepthceiling - diapausedepthvar if diapausedepthopr == 0 else  diapausedepthceiling + diapausedepthvar
             
-            diapausedepthvar = np.random.randint(low = 0, high = 100, size = 1).squeeze().item()
-            diapausedepthopr = np.random.randint(low = 0, high = 2, size = 1).squeeze().item()
+            if stochastic:
+                diapausedepthvar = np.random.randint(low = 0, high = 100, size = 1).squeeze().item()
+                diapausedepthopr = np.random.randint(low = 0, high = 2, size = 1).squeeze().item()
+
             diapausedepthfloor = diapausedepthfloor - diapausedepthvar if diapausedepthopr == 0 else diapausedepthfloor + diapausedepthvar
 
         else:
@@ -367,10 +378,16 @@ def diapausedepthselection(maxdepth: int, ddt0: int, ddt1: int, ddt2: int, depth
             diapausedepthceiling = diapausedepthfloor - 100
 
             #randomizing diapause depth ceiling and floor values
-            diapausedepthvar = np.random.randint(low = 0, high = 50, size = 1).squeeze().item()
+            if stochastic:
+                diapausedepthvar = np.random.randint(low = 0, high = 50, size = 1).squeeze().item()
+            else:
+                diapausedepthvar = 25
+
             diapausedepthceiling -= diapausedepthvar
             
-            diapausedepthvar = np.random.randint(low = 0, high = 50, size = 1).squeeze().item()
+            if stochastic:
+                diapausedepthvar = np.random.randint(low = 0, high = 50, size = 1).squeeze().item()
+
             diapausedepthfloor += diapausedepthvar
         
         #end if
@@ -382,8 +399,12 @@ def diapausedepthselection(maxdepth: int, ddt0: int, ddt1: int, ddt2: int, depth
 
         diapausedepthselprob = np.exp(-0.5 * ((diapausedepthrange - diapausedepthmean) / diapausedepthsd)**2)
         diapausedepthselprob /= np.sum(diapausedepthselprob)
+        
+        if stochastic:
+            selecteddiapausedepth = np.random.choice(a = diapausedepthrange, replace = False, size = 1, p = diapausedepthselprob).squeeze().item()
+        else:
+            selecteddiapausedepth = diapause_depth_range[0]
 
-        selecteddiapausedepth = np.random.choice(a = diapausedepthrange, replace = False, size = 1, p = diapausedepthselprob).squeeze().item()
         diapausedepthidx = np.argmin(np.abs(depthrange - selecteddiapausedepth)).item()
         
         diapausedepth = depthrange[diapausedepthidx]
@@ -403,10 +424,16 @@ def diapausedepthselection(maxdepth: int, ddt0: int, ddt1: int, ddt2: int, depth
             diapausedepthceiling = diapausedepthfloor - 50
 
             #randomizing diapause depth ceiling and floor values
-            diapausedepthvar = np.random.randint(low = 0, high = 50, size = 1).squeeze().item()
+            if stochastic:
+                diapausedepthvar = np.random.randint(low = 0, high = 50, size = 1).squeeze().item()
+            else:
+                diapausedepthvar = 25
+
             diapausedepthceiling -= diapausedepthvar
             
-            diapausedepthvar = np.random.randint(low = 0, high = 50, size = 1).squeeze().item()
+            if stochastic:
+                diapausedepthvar = np.random.randint(low = 0, high = 50, size = 1).squeeze().item()
+
             diapausedepthfloor += diapausedepthvar
 
         else:
@@ -429,8 +456,12 @@ def diapausedepthselection(maxdepth: int, ddt0: int, ddt1: int, ddt2: int, depth
 
         diapausedepthselprob = np.exp(-0.5 * ((diapausedepthrange - diapausedepthmean) / diapausedepthsd)**2)
         diapausedepthselprob /= np.sum(diapausedepthselprob)
+    
+        if stochastic:
+            selecteddiapausedepth = np.random.choice(a = diapausedepthrange, replace = False, size = 1, p = diapausedepthselprob).squeeze().item()
+        else:
+            selecteddiapausedepth = diapause_depth_range[0]
 
-        selecteddiapausedepth = np.random.choice(a = diapausedepthrange, replace = False, size = 1, p = diapausedepthselprob).squeeze().item()
         diapausedepthidx = np.argmin(np.abs(depthrange - selecteddiapausedepth)).item()
 
         diapausedepth = depthrange[diapausedepthidx]

@@ -451,7 +451,11 @@ class SuperIndividual(object):
 
         # diapause strategy definition (if undefined)
         if self.diapausestrategy == -1:
-            diapausern = np.random.rand(1).squeeze().item()
+            if self.stochastic:
+                diapausern = np.random.rand(1).squeeze().item()
+            else:
+                diapausern = 0.5
+
             self.diapausestrategy = (
                 0 if diapausern <= self.genome.a6_diapauseprobability else 1
             )
@@ -933,13 +937,18 @@ class SuperIndividual(object):
         spawning_m = self.malegenome
         spawning_n = dotdict()
         for attr_name in spawning_f.keys():
-            # this is the crossover probability per-gene (if this value is lower than crossover threshold, then crossover occurs)
-            cxprob = np.random.rand(1).squeeze()
-            # this is mutation probability per-gene (if this value is lower than the mutation threshold, then mutation occurs)
-            muprob = np.random.rand(1).squeeze()
-            # this is the blend value per-gene in BLX-alpha algorithm
-            # nb: see Tkahashi et al, (2001) 10.1109/CEC.2001.934452
-            cxval = np.random.rand(1).squeeze()
+            if self.global_settings["stochastic"]:
+                # this is the crossover probability per-gene (if this value is lower than crossover threshold, then crossover occurs)
+                cxprob = np.random.rand(1).squeeze()
+                # this is mutation probability per-gene (if this value is lower than the mutation threshold, then mutation occurs)
+                muprob = np.random.rand(1).squeeze()
+                # this is the blend value per-gene in BLX-alpha algorithm
+                # nb: see Tkahashi et al, (2001) 10.1109/CEC.2001.934452
+                cxval = np.random.rand(1).squeeze()
+            else:
+                cxprob = 0.5
+                muprob = 0.5
+                cxval = 0.5
 
             # crossover algorithm (BLX-alpha)
             if cxprob < self.cxthreshold:
@@ -953,7 +962,7 @@ class SuperIndividual(object):
             # end if
             # mutation algorithm (random replacement)
             # nb:the <else> condition is not written because, no mutation does not change the genome
-            if muprob < self.muthreshold:
+            if muprob < self.muthreshold and self.global_settings["stochastic"]:
                 spawning_n[attr_name] = np.random.rand(1)[0]
 
         return spawning_n
