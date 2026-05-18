@@ -128,7 +128,7 @@ class PascalSimulation(object):
             self.gene_hunt()
             self.clean_dead()
             self.respawn()
-            if self.current_time == self.current_time.replace(hour=0, minute=0, second=0, microsecond=0):
+            if self.current_time.day == 1:
                 self.report()
 
             if self.debug is not None:
@@ -353,7 +353,7 @@ class PascalSimulation(object):
             text=f"[PROG:{progress:>8}%] [MO: {month}] [YR: {year}] "
                  f"[ESTIMATED POPULATION SIZE: {pop_size}] No si = {n_si}"
         )
-        if self.current_time.month == 12:
+        if self.current_time.month == 12 and self.current_time.hour == 0:
             print("")
 
     def record_lifestats(self, individ):
