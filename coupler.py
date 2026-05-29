@@ -14,7 +14,6 @@ DEFAULT_DEPTHRANGE = np.array([1, 2, 3, 4, 6, 7, 8, 10, 12, 14, 16, 19, 22, 26, 
                                35, 41, 48, 56, 66, 78, 93, 110, 131, 156, 187, 223,
                                267, 319, 381, 454, 542, 644, 764, 903, 1063, 1246])
 
-
 class PascalSimulation(object):
     def __init__(
         self, nsupindividuals, nvindividualspersupindividual,
@@ -128,7 +127,7 @@ class PascalSimulation(object):
             self.gene_hunt()
             self.clean_dead()
             self.respawn()
-            if self.current_time.day == 1:
+            if self.current_time.day == 1 and self.current_time.hour == 0:
                 self.report()
 
             if self.debug is not None:
@@ -477,6 +476,9 @@ class PascalAdvection(PascalSimulation):
         else:
             self.tracker.add_reader(reader)
 
+        self.tracker.set_config('general:use_auto_landmask', False)
+        self.tracker.set_config('general:seafloor_action', 'lift_to_seafloor')
+
         if self.tracker_config is not None:
             for k,v in self.tracker_config.items():
                 self.tracker.set_config(k, v)
@@ -491,7 +493,7 @@ class PascalAdvection(PascalSimulation):
             steps=None,
             time_step_output=None,
             duration=None,
-            end_time=self.end_time,
+            end_time=self.end_time + dt.timedelta(days=365),
             stop_on_error=True,
             outfile=self.opendriftout,
             export_variables=['x', 'y', 'temperature']
