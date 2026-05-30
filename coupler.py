@@ -20,7 +20,7 @@ class PascalSimulation(object):
         global_settings, reader, timestep, start_date, duration,
         seeding_rate, timestep_isplit=1, diapause_depth=500, outputgrid=None,
         debug=None, opendriftoutfile=None, verbose=False, start_locations=None,
-        tracker_config=None
+        tracker_config=None, headless=None
     ):
         print("")
         termcolor.cprint(
@@ -40,14 +40,26 @@ class PascalSimulation(object):
             text="_" * 84,
             color="light_blue"
         )
-        print("")
-        termcolor.cprint(
-            text="enter a unique identifier for the execution (e.g., pascalv42_r001):",
-            color="light_red"
-        )
-        self.outputfolder = input("TYPE ID HERE AND PRESS ENTER: ")
-        termcolor.cprint(text="_" * 84, color="light_blue")
-        print("")
+        if headless is None:
+            print("")
+            termcolor.cprint(
+                text="enter a unique identifier for the execution (e.g., pascalv42_r001):",
+                color="light_red"
+            )
+            self.outputfolder = input("TYPE ID HERE AND PRESS ENTER: ")
+            termcolor.cprint(text="_" * 84, color="light_blue")
+            print("")
+        else:
+            print("")
+            self.outputfolder = headless
+            termcolor.cprint(
+                text=f"Run output folder {headless}",
+                color="light_red"
+            )
+            termcolor.cprint(text="_" * 84, color="light_blue")
+            print("")
+
+
         execstarttime_prt = strftime("%Y-%m-%d %H:%M:%S", gmtime())
         termcolor.cprint(
             text=f"\nexecution started at: {execstarttime_prt} GMT",
