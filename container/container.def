@@ -1,0 +1,71 @@
+Bootstrap: docker
+From: continuumio/miniconda3:23.5.2-0
+
+%labels
+    Version 2.0
+    Description Runtime environment for PASCAL (pascal_modular conda env) benchmarking/HPC scaling. Fixes a previous version that could not build (referenced a nonexistent environment.yaml - the real file is environment.yml - and used an unrelated project's conda env name throughout).
+
+%post
+    apt-get update -y && apt-get install -y --no-install-recommends \
+        build-essential \
+        libhdf5-serial-dev \
+        libnetcdf-dev \
+        wget \
+        git \
+        ca-certificates \
+        && apt-get clean \
+        && rm -rf /var/lib/apt/lists/*
+
+    conda install -n base -c conda-forge mamba -y
+
+    mamba env create -f /opt/environment.yml
+    mamba clean -afy
+
+    # copernicusmarine is a normal, stable PyPI dependency (used by the
+    # live-CMEMS benchmarking path - see BENCHMARKING.md) so it's fine to
+    # bake in here.
+    #
+    # opendrift and this pascal package itself are NOT installed here,
+    # deliberately: both are actively-developed local checkouts (with
+    # real, currently-uncommitted work in progress as of 2026-08 - see
+    # BENCHMARKING.md), not fixed released dependencies. Baking them in
+    # would mean rebuilding this image every time either changes, and
+    # would silently pin whatever happened to be checked out at image
+    # build time. Bind-mount them at runtime instead - see
+    # run_in_container.sh and BENCHMARKING.md's usage instructions.
+    /opt/conda/envs/pascal_modular/bin/pip install copernicusmarine
+
+    echo "source activate pascal_modular" >> /etc/bash.bashrc
+
+%files
+    environment.yml /opt/environment.yml
+
+%environment
+    export CONDA_DEFAULT_ENV=pascal_modular
+    export PATH=/opt/conda/envs/pascal_modular/bin:$PATH
+    export LD_LIBRARY_PATH=/opt/conda/envs/pascal_modular/lib:$LD_LIBRARY_PATH
+
+%runscript
+    exec python "$@"
+
+%help
+    Provides the pascal_modular conda environment only - not the PASCAL
+    model code or opendrift, both of which are actively-developed local
+    checkouts meant to be bind-mounted at run time. See
+    container/run_in_container.sh and BENCHMARKING.md for usage.
+
+    Build (from the repo root, pascal_classparallel_branch/) - needs
+    --fakeroot or root, which many HPC login/submit nodes don't grant
+    ordinary users. Build locally (or in CI) and copy the resulting
+    pascal.sif to the cluster rather than assuming the build itself can
+    run there:
+        apptainer build --fakeroot container/pascal.sif container/container.def
+
+    Run (from the repo root; adjust the opendrift_pascal path):
+        apptainer exec --writable-tmpfs \
+            --bind "$(pwd)":/pascal \
+            --bind /path/to/opendrift_pascal:/opendrift \
+            container/pascal.sif \
+            /pascal/container/run_in_container.sh \
+            python /pascal/benchmarks/run_local_benchmark.py \
+                --scenario 1d --n-super 200 --duration 0.5
