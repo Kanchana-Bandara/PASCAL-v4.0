@@ -424,9 +424,159 @@ Full test suite (`tests/`, 11 tests) passes throughout.
    pass~~ — done, ~1.1-1.15x, real but modest; the bigger opportunity
    (vertical migration, ~50%+ of the two largest stage methods) needs a
    separate, larger, domain-reviewed effort - see above.
-7. **Next: container + HPC scaling test** - useful both on its own merits
-   and for checking whether the multiprocessing economics found in Phase 2
-   differ at genuinely large population sizes / multi-node.
+7. ~~Extend benchmarking to the advection (3D) scenario~~ — done, see below.
+   Found and fixed a real 3D-specific performance issue (`get_profile()`
+   caching), and found (not fixed - needs domain input) a serious
+   correctness gap in the CMEMS reader configuration.
+8. Container + HPC scaling test - useful both on its own merits and for
+   checking whether the multiprocessing economics found in Phase 2 differ
+   at genuinely large population sizes / multi-node.
 
 This file will be extended (not replaced) as each phase lands, with real
 numbers each time — no illustrative/example output going forward.
+
+## Extending benchmarking to the advection (3D) scenario
+
+Every benchmark above this point was run on the `Pascal1D` scenario. The
+model will actually be deployed in advective (3D) mode, so that gap needed
+closing - not just for coverage's sake, but because two real,
+advection-specific issues were sitting undiscovered in it, described below.
+Both were only found because this section's testing actually ran the 3D
+path, rather than assuming the 1D numbers generalize.
+
+### Vectorization fixes carry over correctly
+
+Re-ran the `update_vert()`/mortality-batching comparison (git-stashing back
+to the pre-vectorization commit for a clean A/B) on
+`build_advection_scenario` instead of `build_1d_scenario`: same
+bit-identical population size before/after (`60349.33744888904`), same
+direction and rough magnitude of speedup as 1D. So the vectorization work
+itself generalizes fine to 3D - the two issues below are additional to it,
+not caused by it.
+
+### Found and fixed: get_profile() was redundantly re-interpolating
+
+`SuperIndividual.get_profile()` has a `depth_interpolate` fallback
+(`np.interp()`) for when a reader's own profile depth levels don't match
+`global_settings['depthrange']` exactly. `Pascal1D`'s synthetic benchmark
+data was deliberately built with matching z-levels (to keep the
+scenario-building code simple), so `depth_interpolate` was always `False`
+there and this path was never exercised by any benchmark up to this point.
+
+In the real advection scenario, `depth_interpolate` is `True`: confirmed
+OpenDrift's own `environment_profiles['z']` for this reader has 2 levels
+vs. PASCAL's configured 37. Worse, `get_profile()` was being called 2-3x
+per individual per timestep for the *same* variable (once via
+`apply_dsc1_verticalmigration`'s own `get_profile()` calls, again via
+`get_zi()` in growth, again in mortality), independently re-running
+`np.interp()` each time for identical input.
+
+Fixed with a per-individual, per-timestep cache (cleared by
+`sync_environment_references()`, alongside the existing
+maxdepth/mindepth refresh - environment_profiles/environment_index are
+constant for the whole timestep, so the cache can't go stale mid-timestep,
+including across `isplit` sub-steps). `tests/test_profile_cache.py` checks:
+the scenario genuinely needs interpolation (so the test can't silently stop
+testing anything if that ever changes), cached values match a direct
+recomputation, `np.interp` is called exactly once per variable per
+timestep (mocked and counted) instead of 2-4x, and the cache is properly
+cleared.
+
+Measured (unprofiled, 4 runs, 200 super-individuals/0.5y advection
+scenario, sequential):
+
+```
+                                    wall_time_s   vs. pre-vectorization baseline
+baseline (pre-vectorization)         ~17.15s      -
++ update_vert/mortality batching     ~15.54s      1.10x
++ get_profile() cache (this fix)     ~13.5s       1.27x
+```
+
+No regression on the 1D benchmark (~7.0s, unchanged) where this cache is a
+near-no-op (`depth_interpolate=False`, cache lookups are cheap either way).
+
+### Found, NOT fixed: the live-CMEMS reader configuration feeds PASCAL zero real data
+
+This is more serious than a performance issue - **the officially-supported
+example script for running PASCAL against live 3D data
+(`advection_test_barents.py`) appears to feed the model almost entirely
+constant fallback values, not real CMEMS data**, and the simulation gives
+no indication of this - it runs, advects, and produces output that looks
+superficially plausible.
+
+`pascal_drift.py::PascalDrift.required_variables` declares PASCAL's needs
+using short internal names: `temperature`, `mld`, `food1concentration`,
+`irradiance`, `pred1dens`, `pred1lightdep` (plus `x_sea_water_velocity`/
+`y_sea_water_velocity`, which *are* real CF standard names). OpenDrift
+matches a reader's variables to a model's required variables by exact
+name. The CMEMS readers (`reader_copernicusmarine`) expose real CF
+standard names instead - `sea_water_temperature`,
+`mass_concentration_of_chlorophyll_a_in_sea_water`, etc. - not PASCAL's
+short names, and `advection_test_barents.py` does no
+`standard_name_mapping` to bridge them. Every required variable that isn't
+satisfied gets OpenDrift's configured `fallback` value instead, silently -
+no warning, no error, the run just proceeds.
+
+Verified directly (not inferred) by instrumenting a short live-CMEMS run
+against both physical (`cmems_mod_arc_phy_anfc_6km_detided_P1D-m`) and
+biogeochemistry (`cmems_mod_arc_bgc_anfc_ecosmo_P1D-m`) readers, using real
+Copernicus Marine credentials already present in this environment:
+
+```
+food1concentration=0.0   (fallback=0, pascal_drift.py)
+irradiance=0.0           (fallback=0)
+pred1dens=0.0            (fallback=0)
+temperature=10.0         (fallback=10)
+mld=50.0                 (fallback=50)
+```
+
+Every single value exactly matches its configured fallback default -
+functionally indistinguishable from running with a `ConstantReader`, while
+giving every appearance of using real 3D forcing. `x_sea_water_velocity`/
+`y_sea_water_velocity` likely *do* work correctly (they're both PASCAL's
+declared name and the real CF standard name, and were listed as available
+by the CMEMS physical reader) - so particle transport/advection is
+probably using real currents, while every biological/physiological driver
+is not.
+
+**Consequence observed**: with `food1concentration` pinned at 0, individuals
+can never feed; running a short live-CMEMS simulation (5 super-individuals,
+~3 days) produced population collapse from 10,000 to under 100 virtual
+individuals per super-individual within 11-13 timesteps - an implied ~44%
+mortality risk *per 6-hour timestep*, nowhere near biologically plausible.
+This is a strong candidate explanation (an addition to, or possibly the
+same underlying cause as) the "why when I run the old code are the numbers
+dieing weird" question already sitting in `notes`.
+
+**Why this isn't fixed here**: a real fix needs a `standard_name_mapping`
+from each CMEMS variable to PASCAL's internal name, and for the
+biogeochemistry variables specifically, that's not just a rename - it
+needs domain knowledge this session doesn't have: does
+`mass_concentration_of_chlorophyll_a_in_sea_water` convert linearly to
+whatever units/scale `food1concentration` expects, or does it need a
+conversion factor? Does CMEMS's BGC product provide anything usable for
+`irradiance` (PAR) at all, or does that need a separate source/derivation?
+What is `pred1dens`/`pred1lightdep` supposed to be computed from - these
+look like parameterized predation-risk proxies specific to this model, not
+something CMEMS provides directly. Guessing at unit conversions/proxies
+for a biological model without that domain knowledge would risk creating
+a *worse* problem than the current honest (if silent) fallback-to-constant
+behavior. This needs Kanchana or whoever built the CMEMS-based workflow
+originally.
+
+**Also investigated and found non-viable as-is**: the fixed/local CMEMS
+netCDF files (`input_pascal_cmems1/*.nc`, ~2GB each, real per-variable
+grids at 97x97x37x1460 resolution) were checked as a potential
+reproducible (non-network-dependent) alternative for 3D benchmarking.
+OpenDrift's generic CF reader (`reader_netCDF_CF_generic`) crashes on them
+with a `ZeroDivisionError` - their `time` coordinate uses a non-CF-compliant
+unit (`'6hrs'` instead of a proper `"<unit> since <epoch>"` string), which
+the reader's time-step-detection logic divides by zero on. These files
+appear to have been prepared for a different consumption pattern (the 1D
+raw-array style used by `aux_funcs.get_envdict()` in `pascal_test/`, which
+reads them with plain `netCDF4.Dataset(...)[var][:]` rather than through
+any OpenDrift reader interface) rather than as a drop-in 3D reader source.
+Making them usable would need either a custom `Reader` subclass or
+preprocessing the files' time metadata - both real engineering efforts,
+and the latter would mean modifying multi-GB data files with only ~31G
+disk free at the time of writing. Not attempted.
