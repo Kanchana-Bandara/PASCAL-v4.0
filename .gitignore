@@ -24,3 +24,4 @@ test.py
 .pytest_cache
 .benchmarks
 profile.stats
+*.egg-info/

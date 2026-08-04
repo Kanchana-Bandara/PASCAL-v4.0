@@ -132,3 +132,65 @@ def build_1d_scenario(
         "seeding_rate": seeding_rate,
         "headless": headless,
     }
+
+
+def build_advection_scenario(
+    n_super_individuals=50,
+    n_virtual_per_super=10000,
+    duration_years=0.05,
+    timestep_seconds=21600,
+    seeding_rate=10,
+    stochastic=True,
+    seed=0,
+    headless="bench_run",
+):
+    """Return kwargs ready to pass to coupler.PascalAdvection(**kwargs)
+    (or coupler_parallel.PascalAdvectionParallel(**kwargs)).
+
+    Unlike Pascal1D (where every super-individual shares a single
+    environment_index=0, so environment_profiles arrays only ever have one
+    column), this gives each super-individual its own OpenDrift tracker
+    element/column via a spatially-uniform ConstantReader. That's what
+    actually exercises the thing coupler_parallel.py's per-individual
+    slicing exists for: in this scenario environment_profiles arrays have
+    shape (n_depth, n_super_individuals), and every SuperIndividual holds a
+    reference to the *whole* array, not just its own column.
+    """
+    from opendrift.readers.reader_constant import Reader as ConstantReader
+
+    np.random.seed(seed)
+
+    timestep = dt.timedelta(seconds=timestep_seconds)
+    start_date = dt.datetime(2010, 1, 1)
+
+    reader = ConstantReader({
+        "x_sea_water_velocity": 0.1,
+        "y_sea_water_velocity": 0.05,
+        "x_wind": 0,
+        "y_wind": 0,
+        "temperature": 8,
+        "sea_water_salinity": 35,
+        "land_binary_mask": 0,
+        "ocean_vertical_diffusivity": 0.02,
+        "food1concentration": 0.05,
+        "irradiance": 0.1,
+        "pred1dens": 0.00001,
+        "pred1lightdep": 0.1,
+        "mld": 100,
+    })
+
+    outputgrid = {"lon": [-1, 0, 1], "lat": [69, 70, 71]}
+
+    return {
+        "nsupindividuals": n_super_individuals,
+        "nvindividualspersupindividual": n_virtual_per_super,
+        "global_settings": build_global_settings(stochastic=stochastic),
+        "reader": reader,
+        "timestep": timestep,
+        "start_date": start_date,
+        "duration": duration_years,
+        "seeding_rate": seeding_rate,
+        "start_locations": [[0.0, 70.0]],
+        "outputgrid": outputgrid,
+        "headless": headless,
+    }
