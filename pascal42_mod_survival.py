@@ -209,13 +209,56 @@ def mortalityrisk_dsc2(strmass: float, maxstrmass: float, resmass: float, vpreld
 
     #total mortality risk
     totalmortalityrisk = starvationrisk + visualpredationrisk + nonvisualpredationrisk + bgmrisk
-    
+
     if totalmortalityrisk > 1.00:
 
         totalmortalityrisk = 1.00
-    
+
     #end if
-    
+
     return totalmortalityrisk
-    
+
+#end def
+
+
+def mortalityrisk_dsc2_vectorized(strmass, maxstrmass, resmass, vpreldensity, irradiance, maxirradiance, minirradiance, nvpreldensity, bgmrisk):
+    """Vectorized sibling of mortalityrisk_dsc2, for batching the mortality
+    calculation across many super-individuals at once instead of calling
+    mortalityrisk_dsc2() once per individual.
+
+    strmass/maxstrmass/resmass/vpreldensity/irradiance are expected to be
+    numpy arrays (one element per individual); maxirradiance/minirradiance/
+    nvpreldensity/bgmrisk are scalars (global settings, shared by every
+    individual) and broadcast automatically.
+
+    Deliberately kept as a separate function alongside the scalar
+    mortalityrisk_dsc2() (not a replacement) so the scalar version stays
+    available/unchanged for anyone else using it. See
+    coupler.py::apply_mortality_and_deathcheck_batch() for the caller and
+    tests/test_survival_vectorized.py for the property-based check that
+    this matches mortalityrisk_dsc2() exactly on many random inputs.
+    """
+    import numpy as np
+
+    strcat = (maxstrmass - strmass) / maxstrmass
+    starvationrisk = np.where(
+        strmass < maxstrmass,
+        np.where(
+            strcat <= 0.10,
+            0.00,
+            1.00 / (1.00 + np.exp((0.25 - strcat) / 0.05)),
+        ),
+        0.00,
+    )
+
+    totalmass = strmass + resmass
+
+    vplightdependence = 0.1 + (irradiance - minirradiance) * ((0.9 - 0.1) / (maxirradiance - minirradiance))
+    visualpredationrisk = vpreldensity * vplightdependence * (1.00 / (1.00 + np.exp((350.00 - totalmass) / 75.00)))
+    nonvisualpredationrisk = nvpreldensity
+
+    totalmortalityrisk = starvationrisk + visualpredationrisk + nonvisualpredationrisk + bgmrisk
+
+    return np.minimum(totalmortalityrisk, 1.00)
+
 #end def

@@ -216,6 +216,10 @@ class SuperIndividual(object):
         return self.get_profile(var)[self.zidx]
 
     def update_lifestage(self):
+        self.run_stage_transition()
+        self.apply_mortality_and_deathcheck()
+
+    def run_stage_transition(self):
         # the growth & development, survival and reproductive simulation happens within this if() condition based on developmental stage
         # no else() condition is written, as the loop skips if a super indivdual is dead or unseeded/uninitialized
 
@@ -242,6 +246,17 @@ class SuperIndividual(object):
         elif self.developmentalstage == 12:
             self.stage_12()
 
+    def apply_mortality_and_deathcheck(self):
+        # Split out from update_lifestage() so coupler.py can batch this
+        # part (uniform, branch-simple math shared by every stage>2
+        # individual) across many individuals in one vectorized pass
+        # instead of calling it once per individual - see
+        # coupler.py::apply_mortality_and_deathcheck_batch() and
+        # BENCHMARKING.md. run_stage_transition() (the stage-specific
+        # growth/vertical-migration dispatch above) is NOT batched: its
+        # vertical migration functions have genuinely per-individual
+        # variable-length search logic that doesn't reduce to simple
+        # array masking - see BENCHMARKING.md for why that's out of scope.
         if self.developmentalstage > 2:
             self.apply_dsc2_mortality()
 

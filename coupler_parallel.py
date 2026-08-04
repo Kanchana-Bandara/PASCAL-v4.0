@@ -214,10 +214,14 @@ class PascalSimulationParallel(PascalSimulation):
 
             self.supindividuals = results
         else:
-            # Sequential execution (original code)
+            # Sequential fallback (population too small to be worth
+            # dispatching to workers) - uses the same batched mortality/
+            # death-check pass as the base sequential path (see
+            # coupler.py::apply_mortality_and_deathcheck_batch()).
             for this_individual in self.supindividuals:
                 if this_individual is not None:
-                    this_individual.update_lifestage()
+                    this_individual.run_stage_transition()
+            self.apply_mortality_and_deathcheck_batch()
 
     def finish_run(self):
         """Override to ensure pool cleanup before parent finish_run."""

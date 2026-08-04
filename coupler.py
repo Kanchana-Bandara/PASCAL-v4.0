@@ -3,6 +3,7 @@ from individual import SuperIndividual
 from data_logger import OutputLogger
 from pascal_drift import PascalDrift
 from utils import dotdict, flatten_list, flatten_dict, points_within_distance
+import pascal42_mod_survival as sv
 
 import datetime as dt
 import numpy as np
@@ -185,7 +186,71 @@ class PascalSimulation(object):
     def update_lifestage(self):
         for this_individual in self.supindividuals:
             if this_individual is not None:
-                this_individual.update_lifestage()
+                this_individual.run_stage_transition()
+        self.apply_mortality_and_deathcheck_batch()
+
+    def apply_mortality_and_deathcheck_batch(self):
+        """Vectorized replacement for calling each individual's own
+        apply_mortality_and_deathcheck() one at a time.
+
+        Safe to run as a separate pass *after* every individual's
+        run_stage_transition() above (rather than interleaved,
+        per-individual, as SuperIndividual.update_lifestage() does it):
+        neither the dsc2 mortality calculation nor the death check reads
+        any other individual's state, and neither draws random numbers -
+        all the stochastic behavior (sex determination, diapause strategy,
+        gene crossover/mutation) lives in run_stage_transition(), whose
+        iteration order over self.supindividuals is unchanged above. So
+        this batching cannot change the sequence of random draws, and
+        produces bit-identical results to the pure per-individual path
+        (checked in tests/test_coupler_batched_mortality.py).
+        """
+        active = self.active_supindividuals()
+        if len(active) == 0:
+            return
+
+        stage = np.array([si.developmentalstage for si in active])
+        mortality_mask = stage > 2
+        if np.any(mortality_mask):
+            subset = active[mortality_mask]
+            strmass = np.array([si.structuralmass for si in subset])
+            maxstrmass = np.array([si.maxstructuralmass for si in subset])
+            resmass = np.array([si.reservemass for si in subset])
+            vpreldensity = np.array([si.get_zi("pred1dens") for si in subset])
+            irradiance = np.array([si.get_zi("irradiance") for si in subset])
+            nvindividuals = np.array([si.nvindividuals for si in subset])
+
+            risk = sv.mortalityrisk_dsc2_vectorized(
+                strmass=strmass,
+                maxstrmass=maxstrmass,
+                resmass=resmass,
+                vpreldensity=vpreldensity,
+                irradiance=irradiance,
+                maxirradiance=self.global_settings["maxirradiance"],
+                minirradiance=self.global_settings["minirradiance"],
+                nvpreldensity=self.global_settings["nonvisualpredatorreldensity"],
+                bgmrisk=self.global_settings["backgroundmortalityrisk"],
+            )
+            # nb: apply_dsc2_mortality() does NOT truncate to int (unlike
+            # apply_dsc0_mortality/apply_dsc1_mortality, which do) - kept
+            # as float here to match exactly.
+            new_nvindividuals = nvindividuals * (1.00 - risk)
+            for si, nv in zip(subset, new_nvindividuals):
+                si.nvindividuals = nv
+
+        # Universal death check (applies regardless of stage, matching
+        # SuperIndividual.apply_mortality_and_deathcheck()).
+        nvindividuals_all = np.array([si.nvindividuals for si in active])
+        age_all = np.array([si.age for si in active])
+        totalfecundity_all = np.array([si.totalfecundity for si in active])
+        dead_mask = (
+            (nvindividuals_all <= self.global_settings["virtualindividualthrehold"])
+            | (age_all >= self.global_settings["ageceiling"])
+            | (totalfecundity_all >= self.global_settings["fecundityceiling"])
+        )
+        for si, is_dead in zip(active, dead_mask):
+            if is_dead:
+                si.lifestatus = 0
 
     def log_spatial(self):
         varlist = self.datalogger.spatial_var_list
