@@ -84,24 +84,47 @@ class OutputLogger(object):
         self.genome_log[timestep, :, 1] = np.std(genomes)
 
     def resolve_spatial(self, cxyz, data_dict):
-        gridded_data = {}
-        for var in data_dict.keys():
-            gridded_data[var] = np.zeros([self.devstages, len(self.output_grid['lon']), len(self.output_grid['lat']), len(self.output_grid['depth'])])
-        
-        cxyz[cxyz[:,1] > self.max_lon,1] = self.max_lon
-        cxyz[cxyz[:,1] < self.min_lon,1] = self.min_lon
-        cxyz[cxyz[:,2] > self.max_lat,2] = self.max_lat
-        cxyz[cxyz[:,2] < self.min_lat,2] = self.min_lat
+        # nb: vectorized replacement for what used to be a nested Python loop
+        # over every individual, wrapped in a "for d in devstages: if any
+        # individual is in stage d: <loop over ALL individuals again>" outer
+        # loop. That outer loop didn't restrict the inner loop to stage-d
+        # individuals, so it re-added every individual's contribution once
+        # per *distinct* developmental stage present that timestep - with a
+        # population spanning most of the 13 stages (the common case), this
+        # inflated spatial output by up to ~13x. Fixed here as a byproduct
+        # of vectorizing: each individual's contribution is now added
+        # exactly once via np.add.at (which, unlike `arr[idx] += vals`,
+        # correctly accumulates when multiple individuals map to the same
+        # grid cell instead of silently dropping duplicates).
+        shape = [
+            self.devstages,
+            len(self.output_grid['lon']),
+            len(self.output_grid['lat']),
+            len(self.output_grid['depth']),
+        ]
+        gridded_data = {var: np.zeros(shape) for var in data_dict.keys()}
 
-        for d in np.arange(0, self.devstages):
-            if np.any(cxyz[:,0] == d):
-                # Pretty sure there is a more efficient version of this but use for now
-                for i, this_cxyz in enumerate(cxyz):
-                    lon_ind = int(np.floor((this_cxyz[1] - self.min_lon)/ self.lon_res))
-                    lat_ind = int(np.floor((this_cxyz[2] - self.min_lat)/ self.lat_res))
-                    
-                    for var, data in data_dict.items():
-                        gridded_data[var][int(this_cxyz[0])-1, lon_ind, lat_ind, int(this_cxyz[3])] += data[i]
+        if len(cxyz) == 0:
+            return gridded_data
+
+        cxyz = cxyz.copy()
+        cxyz[cxyz[:, 1] > self.max_lon, 1] = self.max_lon
+        cxyz[cxyz[:, 1] < self.min_lon, 1] = self.min_lon
+        cxyz[cxyz[:, 2] > self.max_lat, 2] = self.max_lat
+        cxyz[cxyz[:, 2] < self.min_lat, 2] = self.min_lat
+
+        # nb: stage index is (col - 1); col==0 (egg stage) therefore wraps
+        # to the last stage slot via numpy's negative-index handling, same
+        # as the scalar loop this replaces - preserved as-is since changing
+        # it would be a modelling decision, not a performance one.
+        stage_ind = cxyz[:, 0].astype(np.int64) - 1
+        lon_ind = np.floor((cxyz[:, 1] - self.min_lon) / self.lon_res).astype(np.int64)
+        lat_ind = np.floor((cxyz[:, 2] - self.min_lat) / self.lat_res).astype(np.int64)
+        depth_ind = cxyz[:, 3].astype(np.int64)
+        index = (stage_ind, lon_ind, lat_ind, depth_ind)
+
+        for var, data in data_dict.items():
+            np.add.at(gridded_data[var], index, np.asarray(data))
 
         return gridded_data
 
