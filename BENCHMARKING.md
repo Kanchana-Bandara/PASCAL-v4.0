@@ -150,23 +150,132 @@ Two changes, in `data_logger.py` and `coupler.py`:
 Full test suite (`tests/`, 5 tests: smoke x2, data_logger x3) passes
 throughout.
 
+## Phase 2: fixing coupler_parallel.py - and a negative result
+
+### The bug fixed
+
+Every `SuperIndividual` holds a direct reference to the *entire* shared
+per-timestep environment arrays (`self.environment`, `self.environment_profiles`
+- see `individual.py`'s `__init__` and `coupler.py`'s `seed()`), not just its
+own column. In the advection case (`PascalAdvection`, one OpenDrift tracker
+element per super-individual - as opposed to `Pascal1D`, where every
+individual shares a single column and this doesn't apply) those arrays have
+shape `(n_depth, n_super_individuals)`. The original `coupler_parallel.py`
+did `pool.map(_update_individual_worker, self.supindividuals)`, which
+pickles each `SuperIndividual` independently - meaning the *entire* shared
+environment array got serialized once per individual, per timestep, in both
+directions. This was never benchmarked (see top of this document); it's
+exactly the kind of thing that looks fine in a code review and falls over
+under load.
+
+Fixed by extracting each individual's own small slice of just the
+variables `update_lifestage()`'s call tree actually reads - now declared
+explicitly as `individual.py::PROFILE_ENVIRONMENT_VARIABLES` /
+`SCALAR_ENVIRONMENT_VARIABLES`, colocated with the code that reads them -
+before dispatch, and restoring the individual's real
+`environment_index`/`environment`/`environment_profiles` (needed by
+`coupler.py`'s `log_spatial`/`gene_hunt`/`respawn`, which index into the
+tracker's element arrays by `environment_index`) once results come back.
+`individual.py` itself is unchanged.
+
+Also fixed: workers previously never got their own RNG seed, so multiple
+persistent pool workers would draw statistically correlated random streams
+for the life of the pool (sex determination, diapause strategy, gene
+crossover/mutation all use numpy's global RNG). `_init_worker_rng` now
+seeds each worker independently via `SeedSequence.spawn`, indexed by a
+Pool-scoped atomic counter (deliberately *not*
+`multiprocessing.current_process()._identity`, which is global to the
+parent process's lifetime, not reset per `Pool` - an early version of this
+fix used it and broke the moment a test created a second `Pool` in the same
+process). Tested directly in `tests/test_coupler_parallel.py` since a run
+short enough to test quickly doesn't reach the stochastic branches.
+
+Correctness (not just the RNG fix, but the environment-slicing itself) is
+checked by `tests/test_parallel_matches_sequential_for_deterministic_growth_path`:
+a short run where individuals stay in early, non-stochastic stages, so
+growth/mortality is a pure function of environment + state, and sequential
+vs. parallel must produce bit-identical population trajectories. It does.
+
+### The result: multiprocessing.Pool doesn't pay off here
+
+Benchmarked sequential vs. parallel (4 workers) on the advection scenario,
+same machine (8 cores) as all other numbers in this document:
+
+```
+n_super=200,  duration=0.5y:  sequential 16.1s   parallel 20.1s   (parallel 25% SLOWER)
+n_super=500,  duration=0.3y:  sequential 19.4s   parallel 24.7s   (parallel 27% SLOWER)
+n_super=1500, duration=0.3y:  sequential 50.8s   parallel 62.0s   (parallel 22% SLOWER)
+```
+
+Population trajectories are identical between sequential and parallel at
+every size tested (as expected - these runs don't reach stochastic
+branches either, same caveat as above; this confirms the slicing is
+correct, not that the RNG fix is exercised end-to-end).
+
+Profiling the *parallel* run's main-process time (500 super-individuals)
+shows why: of 30.3s wall time, `{method 'dump' of '_pickle.Pickler'}` alone
+is **9.9s (33%)**, and IPC waiting (`_wait_for_updates`, `connection.recv`,
+`selectors.poll`, ...) accounts for most of the rest. This is *after*
+fixing the environment-duplication bug - the remaining cost is the
+fundamental per-call overhead of process-based IPC (pickling ~30-individual
+chunks, sending them through a pipe, waiting, unpickling results), paid
+once per timestep (438-730 times for these runs), against a payload that's
+individually cheap: Phase 1's profiling put `update_lifestage()` at ~60
+microseconds per individual. Increasing problem size didn't change the
+picture (still ~22-27% slower at 1500 individuals) - the overhead scales
+with individual count too, since chunk-pickling cost is roughly
+proportional to how much state is in each chunk.
+
+**Conclusion: the `coupler_parallel.py` fix was necessary (the old code was
+either wrong-or-worse, never validated) but not sufficient.** Pure
+process-based `multiprocessing.Pool`, dispatched once per timestep, is a
+poor fit for this workload's granularity regardless of payload size,
+because the per-individual compute is simply too cheap relative to IPC
+overhead at these problem sizes. This is a genuine, evidence-based negative
+result, not a reason to abandon parallelization - just a reason to change
+approach. Two directions, not mutually exclusive:
+
+- **Vectorization** (was "Phase 4"): batch same-stage individuals into
+  numpy arrays and vectorize the `pascal42_mod_*` scalar-arithmetic calls.
+  No IPC at all, so no per-call overhead ceiling - given `update_lifestage`
+  is 79% of sequential runtime and its hot functions
+  (`stage_3_9`/`verticalmigration_dsc1`/`dsc2`) are plain scalar math per
+  Phase 1's profile, this is likely to be the more reliably-profitable
+  investment at single-node/small-to-medium scale, and it's now the
+  recommended next step ahead of further multiprocessing work.
+- **Reduce IPC frequency**: dispatch to workers less often (e.g. hand each
+  worker several consecutive timesteps' worth of its individuals' work
+  before returning to the main process) rather than once per timestep, so
+  pickling cost amortizes over more compute per round-trip. Bigger
+  redesign (workers would need several steps' worth of environment data at
+  once, not just one slice), not attempted here - worth revisiting if
+  vectorization turns out to be insufficient, or specifically for genuine
+  multi-node HPC scaling where population sizes are much larger and the
+  per-call economics differ from what's measured here.
+
+`coupler_parallel.py` is kept (with the bug fixes) since it's still
+correct and may pay off at problem sizes/machines not tested here - just
+not recommended as the primary path forward given what's actually been
+measured.
+
 ### Revised phase order
 
 1. ~~Phase 0: fix test harness~~ — done.
 2. ~~Phase 1: profile~~ — done.
 3. ~~Vectorize `resolve_spatial`, dedup `active_supindividuals()`~~ — done,
    1.81x on this scenario, plus a real correctness bug fixed as a byproduct.
-4. **Next: Phase 2** — fix `coupler_parallel.py`'s per-individual full-array
-   pickling problem for `update_lifestage`, now that it's 79% of runtime and
-   no longer capped by a serial `log_spatial`.
-5. Phase 3: correctness validation (sequential vs. parallel, using the
-   `stochastic=False` determinism check already in `tests/test_smoke.py`).
-6. Phase 4: revisit whether vectorizing `update_lifestage` itself
-   (structure-of-arrays across individuals sharing a developmental stage)
-   beats or complements multiprocessing — `stage_3_9`/vertical-migration
-   calls are plain scalar arithmetic per the profile, so this is feasible;
-   worth a decision once Phase 2/3 numbers exist.
-7. Phase 5: container + HPC scaling test.
+4. ~~Phase 2: fix `coupler_parallel.py`'s environment-pickling bug and RNG
+   seeding~~ — done, correctness confirmed, but multiprocessing.Pool nets a
+   *loss* (22-27% slower) at all sizes tested due to IPC overhead - see
+   above.
+5. **Next: vectorize `update_lifestage`'s hot path** (structure-of-arrays
+   across individuals sharing a developmental stage) - no IPC overhead
+   ceiling, and the target functions are already known from Phase 1's
+   profile.
+6. Container + HPC scaling test - now specifically useful for checking
+   whether the multiprocessing economics differ at genuinely large
+   population sizes / multi-node, independent of whatever vectorization
+   achieves single-node.
 
 This file will be extended (not replaced) as each phase lands, with real
 numbers each time — no illustrative/example output going forward.
