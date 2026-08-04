@@ -1,5 +1,6 @@
 /pascalv4
 /__pycache__
+__pycache__/
 .DS_Store
 pascalv4_main_000.py
 pascalv4_main_001.py
@@ -20,3 +21,6 @@ pascalv4_test_001.py
 test.py
 *.sif
 *.nc
+.pytest_cache
+.benchmarks
+profile.stats
