@@ -29,6 +29,22 @@ EXPECTED_GENES = [
     "a8_diapauseexit",
 ]
 
+# The complete set of environment variables update_lifestage()'s call tree
+# reads, via get_profile()/get_zi() (depth-resolved, environment_profiles)
+# and direct access (environment). Kept explicit here - alongside the code
+# that actually reads them - rather than inferred elsewhere, so anything
+# parallelizing/distributing SuperIndividual state (e.g. coupler_parallel.py,
+# which must ship only each individual's own slice of the environment
+# rather than the full shared array) has one place to check that stays in
+# sync if a new variable is added to the read methods below.
+PROFILE_ENVIRONMENT_VARIABLES = (
+    "temperature",
+    "food1concentration",
+    "irradiance",
+    "pred1dens",
+)
+SCALAR_ENVIRONMENT_VARIABLES = ("mld",)
+
 class SuperIndividual(object):
     def __init__(
         self,
