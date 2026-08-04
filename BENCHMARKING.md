@@ -580,3 +580,47 @@ Making them usable would need either a custom `Reader` subclass or
 preprocessing the files' time metadata - both real engineering efforts,
 and the latter would mean modifying multi-GB data files with only ~31G
 disk free at the time of writing. Not attempted.
+
+### The standard_name_mapping fix: implemented, partially verified
+
+`benchmarks/scenario.py::build_cmems_advection_scenario()` implements the
+mapping worked out with the model owner and confirmed 2026-08-04:
+
+| PASCAL name | CMEMS standard name | Reader | Status |
+|---|---|---|---|
+| `temperature` | `sea_water_temperature` | physical | **Verified working** - real, depth-varying values (e.g. 6.66°C at surface down to 5.43°C at 60m, not the fallback 10.0) |
+| `mld` | `ocean_mixed_layer_thickness` | physical | **Verified working** - real values (~5m at the test point, not fallback 50.0) |
+| `food1concentration` | `mass_concentration_of_chlorophyll_a_in_sea_water` | bgc | **Alias registered correctly, but returns 0.0 in practice** - see below |
+| `x`/`y_sea_water_velocity` | (none needed) | - | Not aliased - OpenDrift's own eastward/northward -> x/y rotation already handles this |
+| `ocean_vertical_diffusivity` | (none needed) | - | Overridden by `vertical_mixing:diffusivitymodel: windspeed_Sundby1983` in `tracker_config` |
+| `land_binary_mask` | (none needed) | - | Handled by `general:use_auto_landmask: True` in `tracker_config` |
+| `pred1dens` | *(constant, per direction)* | - | No CMEMS product; separate precomputed netCDF not yet available. Given as a constant (`0.00001`, the same value already proven not to cause die-off in `build_advection_scenario()`) |
+| `pred1lightdep` | *(constant, per direction)* | - | Same as above (`0.1`) |
+| `irradiance` | *(constant, per direction)* | - | Real value needs ERA5 surface radiation via the Copernicus Climate Data Store - not yet integrated, flagged as future work. Given as a constant (`0.1`) for now; OpenDrift has a `reader_oscillating.Reader` that could give a diel sinusoidal signal instead, but it oscillates through negative values (not physically valid for irradiance) without a rectifying wrapper, so a constant was used here as the lower-risk default - a wrapped/clipped oscillating reader is a reasonable small follow-up if a diel signal is wanted for more realistic vertical-migration testing |
+
+**Open issue, not yet root-caused**: with the mapping above wired in,
+`food1concentration` still reads as exactly `0.0` at every depth level
+tested (12/12 identical zeros - not NaN, not masked), at two different
+locations (a coastal point near Tromsø and an offshore point further
+north), despite `reader.variable_mapping['food1concentration']` correctly
+resolving to `'chl'` and a direct block-level query
+(`reader.get_variables(...)`) of the raw `chl` variable near those same
+locations returning plausible, non-zero values (~0.4-3.3). Something
+between the raw block fetch and the point/profile-interpolated fetch
+PASCAL actually uses (`get_variables_interpolated`) is producing zeros
+specifically for this variable, while the exact same code path works
+correctly for `temperature`. Not resolved - would need deeper
+investigation into OpenDrift's interpolation internals for this specific
+reader/variable combination (possibly a projection/coordinate handling
+difference between the two CMEMS products, or a BGC-specific data-
+availability convention this session doesn't have the context to
+diagnose confidently). Consequently, **a live simulation using this
+scenario builder as-is will still show unrealistic starvation-driven
+mortality** until this is fixed - the mapping fix alone did not fully
+resolve the original finding.
+
+Not added to the automated test suite (`tests/`): this scenario builder
+needs live network access and real Copernicus Marine credentials, making
+it unsuitable for repeatable/offline CI-style testing - it's intended for
+manual/occasional verification of the live-data pathway specifically, the
+same category as `advection_test_barents.py` itself.

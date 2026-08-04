@@ -11,6 +11,7 @@ data -- fine for timing/scaling/profiling work, not for scientific runs.
 """
 
 import datetime as dt
+import os
 
 import numpy as np
 
@@ -192,5 +193,121 @@ def build_advection_scenario(
         "seeding_rate": seeding_rate,
         "start_locations": [[0.0, 70.0]],
         "outputgrid": outputgrid,
+        "headless": headless,
+    }
+
+
+def _alias_reader_variable(reader, new_name, existing_name):
+    """Register `new_name` as an alias for `existing_name` on an
+    already-constructed CF-based reader (e.g. reader_copernicusmarine.Reader).
+
+    reader.variable_mapping (built once in __init__) maps standard_name ->
+    raw file variable name; reader.variables is a *snapshot* list taken
+    from variable_mapping.keys() at construction time, not a live view of
+    it - so both need updating for the reader to actually offer the alias
+    to OpenDrift's environment system.
+    """
+    reader.variable_mapping[new_name] = reader.variable_mapping[existing_name]
+    if new_name not in reader.variables:
+        reader.variables.append(new_name)
+
+
+def build_cmems_advection_scenario(
+    n_super_individuals=50,
+    n_virtual_per_super=10000,
+    duration_years=0.05,
+    timestep_seconds=21600,
+    seeding_rate=10,
+    stochastic=True,
+    seed=0,
+    start_date=None,
+    start_location=(14.25, 69.8),
+    pred1dens_constant=0.00001,
+    pred1lightdep_constant=0.1,
+    irradiance_constant=0.1,
+    headless="bench_run",
+):
+    """Return kwargs ready to pass to coupler.PascalAdvection(**kwargs),
+    backed by live Copernicus Marine (CMEMS) data instead of a synthetic
+    reader - for checking the realistic 3D deployment path specifically,
+    not for routine/repeatable benchmarking (this hits a real, rate-limited
+    external API and needs network + credentials - see BENCHMARKING.md's
+    "live-CMEMS reader configuration feeds PASCAL zero real data" section
+    for why this function exists at all).
+
+    PASCAL's required_variables (pascal_drift.py) use short internal names
+    that don't match CMEMS's real CF standard names, so nothing gets
+    matched and everything silently falls back to constant defaults unless
+    aliased. Confirmed mapping (2026-08-04, reviewed):
+        temperature -> sea_water_temperature       (physical reader)
+        mld         -> ocean_mixed_layer_thickness (physical reader)
+        food1concentration -> mass_concentration_of_chlorophyll_a_in_sea_water (bgc reader)
+    x/y_sea_water_velocity need no alias - OpenDrift's reader machinery
+    already rotates eastward/northward -> x/y internally.
+    ocean_vertical_diffusivity/land_binary_mask need no alias either -
+    both handled via tracker_config below (a parameterized diffusivity
+    model and OpenDrift's auto-landmask), not reader lookup.
+
+    irradiance/pred1dens/pred1lightdep have no CMEMS equivalent at all:
+    pred1dens/pred1lightdep are meant to come from a separate, not-yet-
+    available precomputed netCDF (see input_pascal_cmems1/); irradiance
+    needs a real derivation from a surface radiation product (e.g. ERA5 via
+    the Copernicus Climate Data Store) not yet integrated. All three are
+    given as constants here as an explicit stand-in, using the same values
+    already proven not to cause the population collapse a
+    food1concentration=0 fallback does (see build_advection_scenario()).
+    """
+    from netrc import netrc
+
+    from opendrift.readers.reader_constant import Reader as ConstantReader
+    from opendrift.readers.reader_copernicusmarine import Reader as CMEMSReader
+
+    np.random.seed(seed)
+
+    if "COPERNICUSMARINE_SERVICE_USERNAME" not in os.environ:
+        credentials = netrc()
+        os.environ["COPERNICUSMARINE_SERVICE_USERNAME"] = credentials.hosts["copernicusmarine"][0]
+        os.environ["COPERNICUSMARINE_SERVICE_PASSWORD"] = credentials.hosts["copernicusmarine"][1]
+
+    physical = CMEMSReader("cmems_mod_arc_phy_anfc_6km_detided_P1D-m")
+    _alias_reader_variable(physical, "temperature", "sea_water_temperature")
+    _alias_reader_variable(physical, "mld", "ocean_mixed_layer_thickness")
+
+    bgc = CMEMSReader("cmems_mod_arc_bgc_anfc_ecosmo_P1D-m")
+    _alias_reader_variable(
+        bgc, "food1concentration", "mass_concentration_of_chlorophyll_a_in_sea_water"
+    )
+
+    constants = ConstantReader({
+        "pred1dens": pred1dens_constant,
+        "pred1lightdep": pred1lightdep_constant,
+        "irradiance": irradiance_constant,
+    })
+
+    timestep = dt.timedelta(seconds=timestep_seconds)
+    if start_date is None:
+        start_date = dt.datetime(2024, 6, 1)
+
+    lon, lat = start_location
+    outputgrid = {
+        "lon": [lon - 1, lon, lon + 1, lon + 2],
+        "lat": [lat - 1, lat, lat + 1],
+    }
+
+    return {
+        "nsupindividuals": n_super_individuals,
+        "nvindividualspersupindividual": n_virtual_per_super,
+        "global_settings": build_global_settings(stochastic=stochastic),
+        "reader": [physical, bgc, constants],
+        "timestep": timestep,
+        "start_date": start_date,
+        "duration": duration_years,
+        "seeding_rate": seeding_rate,
+        "start_locations": [[lon, lat]],
+        "outputgrid": outputgrid,
+        "tracker_config": {
+            "general:use_auto_landmask": True,
+            "vertical_mixing:diffusivitymodel": "windspeed_Sundby1983",
+        },
         "headless": headless,
     }
