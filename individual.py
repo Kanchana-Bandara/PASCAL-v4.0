@@ -165,6 +165,11 @@ class SuperIndividual(object):
         # this estimates the normalized and range-scaled 0.1-0.9) ambient shortwave irradiance for the calculation of light dependence of the visual predation risk
         self.zidx = 0
         self.zpos = 1
+        # Cache for get_profile(); cleared every timestep by
+        # coupler.py::sync_environment_references(). Initialized here too
+        # (not just there) so direct use of SuperIndividual outside the
+        # normal coupler.py run() loop doesn't hit an AttributeError.
+        self._profile_cache = {}
 
         if len(self.environment_profiles["z"]) != len(
             self.global_settings["depthrange"]
@@ -203,14 +208,31 @@ class SuperIndividual(object):
         # runtime by itself (see BENCHMARKING.md).
 
     def get_profile(self, var):
+        # Cached per individual per timestep (cleared by
+        # coupler.py::sync_environment_references()) since the same var is
+        # commonly re-requested more than once per timestep (e.g.
+        # "temperature" via get_profile() in vertical migration, then again
+        # via get_zi() in growth, then again in mortality) - when
+        # depth_interpolate is True (the common case in advection mode,
+        # where a reader's own profile depth levels rarely match PASCAL's
+        # configured depthrange exactly - see BENCHMARKING.md) each of
+        # those was independently re-running np.interp() over the same
+        # data. Harmless to cache the non-interpolating branch too, since
+        # the dict lookup is cheap either way.
+        if var in self._profile_cache:
+            return self._profile_cache[var]
+
         if self.depth_interpolate:
-            return np.interp(
+            result = np.interp(
                 self.global_settings["depthrange"],
                 -self.environment_profiles["z"],
                 self.environment_profiles[var][:, self.environment_index],
             )
         else:
-            return self.environment_profiles[var][:, self.environment_index]
+            result = self.environment_profiles[var][:, self.environment_index]
+
+        self._profile_cache[var] = result
+        return result
 
     def get_zi(self, var):
         return self.get_profile(var)[self.zidx]

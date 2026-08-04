@@ -172,6 +172,14 @@ class PascalSimulation(object):
         grid - so recomputing max/min of it per individual per timestep
         was pure redundant work (measured at ~17% of total runtime; see
         BENCHMARKING.md).
+
+        Also clears each individual's get_profile() cache: it must not
+        survive into a new timestep's (possibly different) environment
+        data. This is the only place that cache is cleared, so it's safe
+        for get_profile() to cache unconditionally - see BENCHMARKING.md
+        for why that mattered (in advection mode, get_profile()'s
+        np.interp() path was being redundantly re-run 2-3x per individual
+        per timestep for the same variable).
         """
         z = self.tracker.environment_profiles["z"]
         maxdepth = np.max(-z)
@@ -182,6 +190,7 @@ class PascalSimulation(object):
                 this_individual.environment_profiles = self.tracker.environment_profiles
                 this_individual.maxdepth = maxdepth
                 this_individual.mindepth = mindepth
+                this_individual._profile_cache = {}
 
     def update_lifestage(self):
         for this_individual in self.supindividuals:
