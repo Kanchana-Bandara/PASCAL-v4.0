@@ -291,6 +291,124 @@ none of the absolute wall-clock/population numbers above should be assumed
 to still match run-for-run after this fix; they weren't re-measured against
 it.
 
+## Vectorizing update_lifestage()'s hot path
+
+Re-profiled first (post environment-sync fix) to check the hot path hadn't
+shifted: it hadn't. `update_lifestage` is still ~80% of runtime,
+`stage_3_9` alone ~44%.
+
+### What was investigated but *not* vectorized, and why
+
+Read `pascal42_mod_verticalmigration.py::verticalmigration_dsc1`/`dsc2` in
+full before committing to an approach - these are the single largest cost
+within `stage_3_9`/`stage_10_11` (`apply_dsc1_verticalmigration` alone is
+52% of `stage_3_9`'s cost). They turn out to have genuinely
+per-individual-divergent control flow: each individual searches a
+*variable-length* depth window (`searchrange = np.arange(searchceiling_idx,
+searchfloor_idx, 1)`, bounds depending on that individual's own mass/
+position), then branches again on predator density vs. sensitivity, then
+again on whether any depth in that ragged window offers a light refuge.
+This doesn't reduce to simple `np.where` masking - a correct vectorized
+version would need padding every individual's search window to a common
+width with masked reductions (`argmax` over padded/masked regions is easy
+to get subtly wrong), which is a substantially larger, higher-risk rewrite
+than is responsible to do unilaterally in this session for a research
+model without the domain expertise to validate the biology, not just the
+arithmetic. Same conclusion for `stage_10_11`/`diapause0`'s strategy
+determination - multi-branch, stochastic, mutates several pieces of state
+across branches.
+
+**Recommendation for anyone picking this up**: the padded/masked-array
+approach is feasible (search windows are bounded by `len(depthrange)`, 37
+elements here) but needs (a) a property-based test suite comparing
+vectorized vs. scalar output across many random cases spanning every
+branch, the same standard applied to `mortalityrisk_dsc2_vectorized`
+below, and (b) domain review of the result, ideally from Kanchana. Treat it
+as a separate, explicitly-scoped effort rather than an extension of this
+one.
+
+### What was vectorized
+
+1. **`individual.py::update_vert()`** - `maxdepth`/`mindepth` were being
+   recomputed identically for every individual, every timestep, via
+   `np.max`/`np.min` over `environment_profiles["z"]` - which has no
+   per-individual axis (every individual sees the same water column grid).
+   140,157 redundant recomputations for a value that only needs computing
+   once per timestep. Moved to
+   `coupler.py::sync_environment_references()` (computed once, set as an
+   attribute on every individual alongside the environment-reference sync
+   from the frozen-environment fix above). `update_vert()` now only
+   computes the genuinely-per-individual `zidx`.
+
+2. **`coupler.py::apply_mortality_and_deathcheck_batch()`** - the part of
+   `update_lifestage()` that's uniform across every individual past the
+   non-feeding stages: `apply_dsc2_mortality()` (called for every
+   individual with `developmentalstage > 2`, regardless of which stage
+   method just ran) and the universal death check. Unlike vertical
+   migration, `mortalityrisk_dsc2` is pure piecewise-threshold scalar math
+   with no ragged arrays - confirmed by reading it in full - so it
+   vectorizes cleanly with `np.where`.
+   `SuperIndividual.update_lifestage()` was split into
+   `run_stage_transition()` (unchanged stage-dispatch logic, still called
+   per-individual, in the same order - this is where vertical migration
+   etc. still runs, deliberately untouched) and
+   `apply_mortality_and_deathcheck()` (the part now also available as a
+   batch). This split is itself a zero-risk pure extraction: `update_lifestage()` still calls both, in the same order, unchanged when called directly.
+
+   Because neither the mortality calculation nor the death check reads
+   another individual's state or draws random numbers, and the stage-
+   transition loop's iteration order is unchanged, batching this part
+   *after* rather than interleaved with each individual's own
+   `run_stage_transition()` cannot change the sequence of random draws -
+   it's provably order-independent, not just empirically similar. Checked
+   directly: `tests/test_coupler_batched_mortality.py` compares the batched
+   path against the pure per-individual reference implementation
+   (`SuperIndividual.update_lifestage()` called one at a time) on the same
+   seed, over a run long enough to actually reach `developmentalstage > 2`,
+   and requires exact agreement on population size *and* every individual's
+   `nvindividuals`/`lifestatus`/`developmentalstage`.
+
+   **A real bug this caught**: the first version of this batching added
+   `.astype(np.int64)` when writing back `nvindividuals`, assuming
+   truncation like `apply_dsc0_mortality`/`apply_dsc1_mortality` (which do
+   truncate). `apply_dsc2_mortality` does not - `self.nvindividuals =
+   self.nvindividuals * (1 - risk)`, no `int()` at all. The parallel-vs-
+   sequential correctness test caught the resulting mismatch immediately
+   (integer 30784 vs. the correct float 30959.49...). Fixed to match
+   exactly; `tests/test_survival_vectorized.py` separately checks
+   `mortalityrisk_dsc2_vectorized` against the scalar original elementwise
+   on 500 random cases plus the exact `strcat == 0.10` boundary.
+
+### Measured result - and a profiling caveat worth knowing about
+
+First measurement, under `cProfile`, looked like a strong win for
+`update_vert` (12.225s → 10.127s, 1.21x) but then a *regression* from
+adding the mortality batching (10.127s → 10.480s). That second number
+turned out to be a profiling artifact: cProfile's per-call instrumentation
+overhead lands disproportionately on code with many small function calls
+(the batching's per-individual `get_zi()`/attribute-gathering), which
+distorts *relative* comparisons between implementations with different
+call-count profiles even when wall-clock reality disagrees. Re-measured
+unprofiled, 5 runs per configuration, on the same 200-super-individual/
+0.5-year scenario:
+
+```
+                              baseline    both fixes   speedup
+n_super=200,  duration=0.5y:  ~7.80s      ~7.00s       1.11x  (clean separation, no overlap across 5+5 runs)
+n_super=800,  duration=0.3y:  ~18.83s     ~16.42s      1.15x  (clean separation, no overlap across 4+4 runs)
+```
+
+("baseline" here is the state right after the frozen-environment fix,
+before either vectorization change - not the very first Phase 0 numbers,
+since the environment-sync fix changed population dynamics and made
+earlier absolute numbers non-comparable.)
+
+Real, consistently-separated, moderate improvement - smaller than
+`cProfile` initially suggested, which is the actual lesson: **always
+cross-check a profiler-driven optimization decision against unprofiled
+wall-clock timing before trusting the magnitude**, not just the direction.
+Full test suite (`tests/`, 11 tests) passes throughout.
+
 ### Revised phase order
 
 1. ~~Phase 0: fix test harness~~ — done.
@@ -302,17 +420,13 @@ it.
    *loss* (22-27% slower) at all sizes tested due to IPC overhead - see
    above.
 5. ~~Fix frozen-environment bug~~ — done, see above.
-6. **Next: vectorize `update_lifestage`'s hot path** (structure-of-arrays
-   across individuals sharing a developmental stage) - no IPC overhead
-   ceiling, and the target functions are already known from Phase 1's
-   profile. Will re-profile first, since the environment-sync fix likely
-   shifts which functions actually dominate now that individuals
-   experience realistic (changing) conditions instead of a frozen
-   snapshot.
-7. Container + HPC scaling test - now specifically useful for checking
-   whether the multiprocessing economics differ at genuinely large
-   population sizes / multi-node, independent of whatever vectorization
-   achieves single-node.
+6. ~~Vectorize `update_vert()` and the universal mortality/death-check
+   pass~~ — done, ~1.1-1.15x, real but modest; the bigger opportunity
+   (vertical migration, ~50%+ of the two largest stage methods) needs a
+   separate, larger, domain-reviewed effort - see above.
+7. **Next: container + HPC scaling test** - useful both on its own merits
+   and for checking whether the multiprocessing economics found in Phase 2
+   differ at genuinely large population sizes / multi-node.
 
 This file will be extended (not replaced) as each phase lands, with real
 numbers each time — no illustrative/example output going forward.
