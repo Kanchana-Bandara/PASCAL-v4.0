@@ -330,3 +330,89 @@ def build_cmems_advection_scenario(
         },
         "headless": headless,
     }
+
+
+def build_cmems_advection_scenario_from_file(
+    cmems_file,
+    n_super_individuals=50,
+    n_virtual_per_super=10000,
+    duration_years=0.05,
+    timestep_seconds=21600,
+    seeding_rate=10,
+    stochastic=True,
+    seed=0,
+    start_date=None,
+    start_location=(14.25, 69.8),
+    food1concentration_constant=0.05,
+    pred1dens_constant=0.00001,
+    pred1lightdep_constant=0.1,
+    irradiance_constant=0.1,
+    headless="bench_run",
+):
+    """Same scientific setup as build_cmems_advection_scenario(), but reads
+    a local netCDF file (as produced by container/download_cmems_data.py)
+    via reader_netCDF_CF_generic instead of streaming live data via
+    reader_copernicusmarine. Intended for actual HPC runs, where compute
+    nodes typically have no internet access and a multi-year run can't
+    afford per-timestep calls to a rate-limited external API - see
+    container/download_cmems_data.py's module docstring and
+    usermanual.md's "Running the model in parallel using the container"
+    section.
+
+    Unlike the live reader (reader_copernicusmarine.Reader), which doesn't
+    forward a standard_name_mapping kwarg to its parent class - hence
+    _alias_reader_variable()'s post-construction monkeypatch above -
+    reader_netCDF_CF_generic.Reader takes standard_name_mapping directly,
+    so the thetao/mlotst -> temperature/mld rename happens cleanly at
+    construction time. vxo/vyo need no mapping: confirmed 2026-08-04 they
+    already carry CF standard_names eastward_/northward_sea_water_velocity,
+    which OpenDrift matches to x_/y_sea_water_velocity automatically.
+
+    food1concentration/irradiance/pred1dens/pred1lightdep are constants
+    here for the same reason as build_cmems_advection_scenario(): no
+    working CMEMS source for them yet (see BENCHMARKING.md).
+    """
+    from opendrift.readers.reader_constant import Reader as ConstantReader
+    from opendrift.readers.reader_netCDF_CF_generic import Reader as CFReader
+
+    np.random.seed(seed)
+
+    physical = CFReader(
+        str(cmems_file),
+        standard_name_mapping={"thetao": "temperature", "mlotst": "mld"},
+    )
+
+    constants = ConstantReader({
+        "food1concentration": food1concentration_constant,
+        "pred1dens": pred1dens_constant,
+        "pred1lightdep": pred1lightdep_constant,
+        "irradiance": irradiance_constant,
+    })
+
+    timestep = dt.timedelta(seconds=timestep_seconds)
+    if start_date is None:
+        start_date = dt.datetime(2024, 6, 1)
+
+    lon, lat = start_location
+    outputgrid = {
+        "lon": [lon - 1, lon, lon + 1, lon + 2],
+        "lat": [lat - 1, lat, lat + 1],
+    }
+
+    return {
+        "nsupindividuals": n_super_individuals,
+        "nvindividualspersupindividual": n_virtual_per_super,
+        "global_settings": build_global_settings(stochastic=stochastic),
+        "reader": [physical, constants],
+        "timestep": timestep,
+        "start_date": start_date,
+        "duration": duration_years,
+        "seeding_rate": seeding_rate,
+        "start_locations": [[lon, lat]],
+        "outputgrid": outputgrid,
+        "tracker_config": {
+            "general:use_auto_landmask": True,
+            "vertical_mixing:diffusivitymodel": "windspeed_Sundby1983",
+        },
+        "headless": headless,
+    }

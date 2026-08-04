@@ -2,8 +2,8 @@ Bootstrap: docker
 From: continuumio/miniconda3:23.5.2-0
 
 %labels
-    Version 2.0
-    Description Runtime environment for PASCAL (pascal_modular conda env) benchmarking/HPC scaling. Fixes a previous version that could not build (referenced a nonexistent environment.yaml - the real file is environment.yml - and used an unrelated project's conda env name throughout).
+    Version 2.2
+    Description Runtime environment for PASCAL (pascal_modular conda env) benchmarking/HPC scaling, plus download-cmems/run-benchmark apps for the real multi-year advection HPC test. Fixes a previous version that could not build (referenced a nonexistent environment.yaml - the real file is environment.yml - and used an unrelated project's conda env name throughout) and a bug where runtime `pip install -e` silently fell back to a --user install that corrupted the host's real Python environment via the bind-mounted $HOME (see %post comments).
 
 %post
     apt-get update -y && apt-get install -y --no-install-recommends \
@@ -37,6 +37,26 @@ From: continuumio/miniconda3:23.5.2-0
 
     echo "source activate pascal_modular" >> /etc/bash.bashrc
 
+    # Belt-and-braces: --fakeroot build + non-root run should already mean
+    # `apptainer build --fakeroot` maps build-time "root" writes to your
+    # real host UID (no actual ownership mismatch at run time), but an
+    # explicitly world-writable env removes any doubt if that ever differs
+    # (e.g. a build done as true root, or run under a different UID/
+    # --fakeroot at run time too). The actual, confirmed requirement for
+    # writing into this env at run time (editable-installing opendrift/
+    # pascal - see run_in_container.sh) is passing --writable-tmpfs (or
+    # --writable) to `apptainer run/exec` - the container filesystem is
+    # read-only by default regardless of these permissions. Forgetting
+    # that flag doesn't just fail cleanly: pip silently retries as a
+    # --user install, which - because $HOME is bind-mounted from the host
+    # by default - corrupts the *host's* real Python environment instead
+    # of erroring. run_in_container.sh now fails loudly if this happens
+    # rather than allowing that silent fallback - found the hard way
+    # 2026-08-04, see BENCHMARKING.md. Every example in this file's
+    # %apphelp/%help sections includes --writable-tmpfs for this reason -
+    # don't drop it when copy-pasting.
+    chmod -R a+rwX /opt/conda/envs/pascal_modular
+
 %files
     environment.yml /opt/environment.yml
 
@@ -48,11 +68,72 @@ From: continuumio/miniconda3:23.5.2-0
 %runscript
     exec python "$@"
 
+# Both apps below just wrap run_in_container.sh + a script that already
+# exists in the bind-mounted repo (nothing app-specific is baked into the
+# image at build time - same "bind-mount the actively-developed code"
+# reasoning as %post above). Using named apps rather than two more
+# %help-documented raw `apptainer exec` invocations makes the two-step,
+# download-then-run HPC workflow (see usermanual.md's "Running the model
+# in parallel using the container" section) explicit at the container
+# interface: `apptainer run --app <name> ...` rather than everyone having
+# to remember/copy-paste the underlying python invocation correctly.
+
+%apprun download-cmems
+    exec /pascal/container/run_in_container.sh python /pascal/container/download_cmems_data.py "$@"
+
+%applabels download-cmems
+    Purpose download-a-local-CMEMS-netCDF-subset
+
+%apphelp download-cmems
+    Downloads a local CMEMS netCDF subset for offline use by the
+    run-benchmark app's advection_cmems_file scenario. Needs internet
+    access and Copernicus Marine credentials (env vars or ~/.netrc) - run
+    this on the HPC login node, not inside a submitted compute job (most
+    clusters give compute nodes no internet egress). See
+    container/download_cmems_data.py for all options.
+
+    apptainer run --app download-cmems --writable-tmpfs \
+        --bind "$(pwd)":/pascal \
+        --bind /path/to/opendrift_pascal:/opendrift \
+        container/pascal.sif \
+        --min-lon 9 --max-lon 20 --min-lat 67 --max-lat 73 \
+        --start-date 2022-01-01 --end-date 2024-01-01 \
+        --output-directory inputdata/cmems --output-filename barents_2022_2024.nc
+
+    (--output-directory under the bind-mounted repo, e.g. inputdata/cmems,
+    so the file is visible at container/HPC run time via the same --bind
+    without depending on Apptainer's default /tmp or $HOME auto-mounts,
+    which some sites disable. *.nc is already gitignored.)
+
+%apprun run-benchmark
+    exec /pascal/container/run_in_container.sh python /pascal/benchmarks/run_local_benchmark.py "$@"
+
+%applabels run-benchmark
+    Purpose run-a-PASCAL-benchmark-or-HPC-scaling-test
+
+%apphelp run-benchmark
+    Runs benchmarks/run_local_benchmark.py inside the container - the 1D/
+    advection synthetic scenarios, or advection_cmems_file against a file
+    from the download-cmems app above. Normally invoked via
+    container/hpc_scaling_test.sbatch (submitted through
+    submit_scaling_sweep.sh or submit_advection_run.sh), not by hand - see
+    usermanual.md's "Running the model in parallel using the container"
+    section for the full workflow.
+
+    apptainer run --app run-benchmark --writable-tmpfs \
+        --bind "$(pwd)":/pascal \
+        --bind /path/to/opendrift_pascal:/opendrift \
+        container/pascal.sif \
+        --scenario advection_cmems_file \
+        --cmems-file inputdata/cmems/barents_2022_2024.nc \
+        --n-super 10000 --duration 2 --start-date 2022-01-01
+
 %help
     Provides the pascal_modular conda environment only - not the PASCAL
     model code or opendrift, both of which are actively-developed local
     checkouts meant to be bind-mounted at run time. See
-    container/run_in_container.sh and BENCHMARKING.md for usage.
+    container/run_in_container.sh, usermanual.md's "Running the model in
+    parallel using the container" section, and BENCHMARKING.md for usage.
 
     Build (from the repo root, pascal_classparallel_branch/) - needs
     --fakeroot or root, which many HPC login/submit nodes don't grant
@@ -61,7 +142,7 @@ From: continuumio/miniconda3:23.5.2-0
     run there:
         apptainer build --fakeroot container/pascal.sif container/container.def
 
-    Run (from the repo root; adjust the opendrift_pascal path):
+    Run directly (from the repo root; adjust the opendrift_pascal path):
         apptainer exec --writable-tmpfs \
             --bind "$(pwd)":/pascal \
             --bind /path/to/opendrift_pascal:/opendrift \
@@ -69,3 +150,7 @@ From: continuumio/miniconda3:23.5.2-0
             /pascal/container/run_in_container.sh \
             python /pascal/benchmarks/run_local_benchmark.py \
                 --scenario 1d --n-super 200 --duration 0.5
+
+    Or via the named apps (see `apptainer run-help --app <name> pascal.sif`
+    for each): download-cmems (fetch a local CMEMS subset), run-benchmark
+    (run the model, including against that subset).

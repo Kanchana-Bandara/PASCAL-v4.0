@@ -695,3 +695,120 @@ then `REPO_ROOT=... OPENDRIFT_ROOT=... ./container/submit_scaling_sweep.sh`
 run from a login/submit node. `coupler_parallel.py` remains single-node
 only (no MPI) - see `submit_scaling_sweep.sh`'s own comments for why a
 multi-node test would be separate, larger work.
+
+## The real Phase 8 target: a multi-year, 10,000-super-individual advective run
+
+`submit_scaling_sweep.sh` answers "does multiprocessing pay off at HPC
+core counts" using a cheap synthetic scenario - useful, but not the
+actual scientific-scale run this infrastructure needs to support. That
+target is specific: a multi-year advective (3D) run at 10,000
+super-individuals against real CMEMS forcing. Two problems stood in the
+way of just pointing the existing tooling at that:
+
+1. `build_cmems_advection_scenario()` (the only CMEMS-backed scenario
+   until now) uses `reader_copernicusmarine.Reader`, which streams data
+   live over the network on every timestep query. Fine for a short
+   verification run from a machine with internet access; wrong for a real
+   HPC job, where compute nodes typically have no internet egress at all,
+   and a multi-year run would otherwise make many thousands of blocking
+   calls against a rate-limited external API from inside the job.
+2. Nothing existed to produce a local file for that scenario to read
+   instead, sized/shaped for an actual run rather than a quick check.
+
+### `container/download_cmems_data.py` and `build_cmems_advection_scenario_from_file()`
+
+`download_cmems_data.py` wraps `copernicusmarine.subset()` to pull a
+local netCDF for a given bbox/depth range/time range up front (intended
+to run on the login node, before submitting the compute job - see
+`usermanual.md`'s new "Running the model in parallel using the container"
+section for the full two-step workflow). Default variables/dataset match
+the mapping already confirmed working for the live reader (`thetao` ->
+`temperature`, `mlotst` -> `mld`; `vxo`/`vyo` need no mapping).
+
+`scenario.py::build_cmems_advection_scenario_from_file()` is the
+offline counterpart to `build_cmems_advection_scenario()`, reading that
+file via `reader_netCDF_CF_generic.Reader` instead of the live reader.
+This turned out cleaner than the live version's approach: the live
+reader (`reader_copernicusmarine.Reader`) doesn't forward a
+`standard_name_mapping` kwarg to its parent class, which is why
+`build_cmems_advection_scenario()` needs the post-construction
+`_alias_reader_variable()` monkeypatch. Called directly,
+`reader_netCDF_CF_generic.Reader` takes `standard_name_mapping` as a
+real constructor argument, so `thetao`/`mlotst` get renamed to
+`temperature`/`mld` at construction time, no monkeypatch needed.
+
+Verified end-to-end with a real (small) download, not just unit-level:
+downloaded a 2-day, ~13-15°E/69-70.5°N, 0-50m subset (four variables,
+~270KB) with real CMEMS credentials already present on this machine,
+confirmed `download_cmems_data.py`'s `--dry-run` and `--skip-existing`
+both behave correctly, constructed `reader_netCDF_CF_generic.Reader`
+against the downloaded file directly and confirmed real (non-fallback)
+values come back for temperature (~6.6-6.9°C, physically plausible for
+the Barents Sea in January), `mld` (~51m) and both velocity components,
+then ran a full tiny `PascalAdvection` simulation against it via both the
+scenario-builder function directly and the actual
+`run_local_benchmark.py --scenario advection_cmems_file` CLI (sequential
+and parallel modes) - all completed with a non-zero
+`final_population_size`. `tests/test_cmems_file_scenario.py` adds this
+to the automated suite using a small synthetic-but-CF-compliant fixture
+built in the test itself (matching the real download's exact
+dims/variable-names/standard_names, so it's a real test of the aliasing
+mechanism, not a mock) - unlike the live-reader scenario, this one needs
+no network to test, so unlike `build_cmems_advection_scenario()` it *is*
+in the automated suite.
+
+### HPC scripts: `submit_advection_run.sh`, and a `hpc_scaling_test.sbatch` gap fixed along the way
+
+`submit_advection_run.sh` submits a single job (not a sweep) for the real
+run: `SCENARIO=advection_cmems_file`, `N_SUPER=10000`, `DURATION=2` years
+by default, both overridable. It reuses `hpc_scaling_test.sbatch` as the
+underlying job script (now extended to forward `--cmems-file`/
+`--start-lon`/`--start-lat`/`--start-date` when set) rather than
+duplicating its apptainer-exec/result-file/`sacct` boilerplate in a
+second file.
+
+Found and fixed while wiring this up: `hpc_scaling_test.sbatch` never had
+a `--workdir` for `run_local_benchmark.py`, so the model's actual output
+(`output_ps.nc`, `lifestats.csv`) was landing in an ephemeral temp
+directory *inside the container's writable-tmpfs overlay* - fine for the
+scaling sweep, which only cares about the printed `wall_time_s` line
+already captured into `results/`, but silently wrong for a real run,
+where that output is the entire point and would otherwise vanish (or, on
+clusters where that tmpfs maps to node-local scratch, never be visible
+outside the job at all) once the job exits. Fixed by adding an optional
+`RUN_OUTPUT_SUBDIR` env var: when set (by `submit_advection_run.sh`),
+`hpc_scaling_test.sbatch` now computes a real output directory under
+`results/` on the host, bind-mounted into the container at the matching
+`/pascal/results/...` path, and passes it as `--workdir`. Left unset for
+`submit_scaling_sweep.sh`, which doesn't need it. Verified locally by
+faking `SLURM_CPUS_PER_TASK`/`SLURM_JOB_ID` (no Slurm on this laptop) and
+confirming `output_ps.nc`/`lifestats.csv` land at the expected host path.
+
+### `container.def`: `download-cmems` and `run-benchmark` apps
+
+Added as named Apptainer apps (`%apprun`/`%apphelp`) rather than two more
+raw `apptainer exec ...` invocations documented in `%help`, so the
+two-step, download-then-run workflow is explicit at the container
+interface itself (`apptainer run --app download-cmems ...` /
+`apptainer run --app run-benchmark ...`). Both are thin wrappers around
+`run_in_container.sh` + a script that already exists in the bind-mounted
+repo - nothing new is baked into the image, so this didn't require adding
+anything to `%post`, only a rebuild (image contents are otherwise
+unchanged; version label bumped 2.0 -> 2.1). Rebuilt and confirmed the
+image still builds cleanly with these apps added.
+
+### Still not done: the actual 10,000-super-individual, multi-year submission on real HPC hardware
+
+Everything above was validated at toy scale on this laptop (no Slurm, no
+GPU/HPC-scale hardware here). What has **not** been run: the real
+`submit_advection_run.sh` submission at its actual target size (10,000
+super-individuals, multi-year, real regional CMEMS download covering the
+full run duration and drift range) on genuine HPC hardware. The resource
+defaults in `submit_advection_run.sh` (`TIME=24:00:00`, `MEM=64G`) are
+explicitly flagged in that script as unvalidated starting points - the
+closest real timing data available is 200 super-individuals/0.5y with a
+*synthetic* `ConstantReader` at ~13.5s sequential (see "Vectorization
+results" above), which doesn't account for real per-timestep CMEMS
+interpolation cost at 50x the population and 4x the duration. First real
+submission should be treated as a calibration run for these resource
+requests, not assumed correct.

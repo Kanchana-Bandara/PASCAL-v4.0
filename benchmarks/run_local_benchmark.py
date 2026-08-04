@@ -18,10 +18,17 @@ Usage:
         --n-super 200 --duration 0.5 --mode sequential
     python benchmarks/run_local_benchmark.py --scenario advection \\
         --n-super 200 --duration 0.5 --mode parallel --n-workers 4
+
+    # Phase 8: real 3D run against a local CMEMS file (see
+    # container/download_cmems_data.py to produce one first)
+    python benchmarks/run_local_benchmark.py --scenario advection_cmems_file \\
+        --cmems-file /path/to/barents_2022_2024.nc --n-super 10000 \\
+        --duration 2 --start-date 2022-01-01 --mode sequential
 """
 
 import argparse
 import cProfile
+import datetime as dt
 import os
 import pstats
 import sys
@@ -43,11 +50,16 @@ BENCHMARKS_DIR = REPO_ROOT / "benchmarks"
 if str(BENCHMARKS_DIR) not in sys.path:
     sys.path.insert(0, str(BENCHMARKS_DIR))
 
-from scenario import build_1d_scenario, build_advection_scenario  # noqa: E402
+from scenario import (  # noqa: E402
+    build_1d_scenario,
+    build_advection_scenario,
+    build_cmems_advection_scenario_from_file,
+)
 
 
 def build_sim(scenario_name, mode, n_super, n_virtual, duration, seed, n_workers,
-              rng_seed):
+              rng_seed, cmems_file=None, start_lon=None, start_lat=None,
+              start_date=None):
     if scenario_name == "1d":
         kwargs = build_1d_scenario(
             n_super_individuals=n_super,
@@ -70,6 +82,29 @@ def build_sim(scenario_name, mode, n_super, n_virtual, duration, seed, n_workers
         from coupler import PascalAdvection
         from coupler_parallel import PascalAdvectionParallel
         sequential_cls, parallel_cls = PascalAdvection, PascalAdvectionParallel
+    elif scenario_name == "advection_cmems_file":
+        if cmems_file is None:
+            raise ValueError(
+                "--cmems-file is required for --scenario advection_cmems_file"
+                " (see container/download_cmems_data.py)"
+            )
+        scenario_kwargs = {}
+        if start_lon is not None and start_lat is not None:
+            scenario_kwargs["start_location"] = (start_lon, start_lat)
+        if start_date is not None:
+            scenario_kwargs["start_date"] = start_date
+        kwargs = build_cmems_advection_scenario_from_file(
+            cmems_file,
+            n_super_individuals=n_super,
+            n_virtual_per_super=n_virtual,
+            duration_years=duration,
+            seed=seed,
+            headless="bench_run",
+            **scenario_kwargs,
+        )
+        from coupler import PascalAdvection
+        from coupler_parallel import PascalAdvectionParallel
+        sequential_cls, parallel_cls = PascalAdvection, PascalAdvectionParallel
     else:
         raise ValueError(scenario_name)
 
@@ -84,10 +119,13 @@ def build_sim(scenario_name, mode, n_super, n_virtual, duration, seed, n_workers
 
 
 def run_once(scenario_name, mode, n_super, n_virtual, duration, seed, n_workers,
-             rng_seed, workdir, profile_out=None):
+             rng_seed, workdir, profile_out=None, cmems_file=None, start_lon=None,
+             start_lat=None, start_date=None):
     os.chdir(workdir)
     sim = build_sim(
-        scenario_name, mode, n_super, n_virtual, duration, seed, n_workers, rng_seed
+        scenario_name, mode, n_super, n_virtual, duration, seed, n_workers, rng_seed,
+        cmems_file=cmems_file, start_lon=start_lon, start_lat=start_lat,
+        start_date=start_date,
     )
 
     if profile_out:
@@ -110,7 +148,11 @@ def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--scenario", choices=["1d", "advection"], default="1d")
+    parser.add_argument(
+        "--scenario",
+        choices=["1d", "advection", "advection_cmems_file"],
+        default="1d",
+    )
     parser.add_argument("--mode", choices=["sequential", "parallel"],
                          default="sequential")
     parser.add_argument("--n-super", type=int, default=200)
@@ -123,6 +165,21 @@ def main():
     parser.add_argument("--profile", action="store_true")
     parser.add_argument("--profile-out", default="profile.stats")
     parser.add_argument(
+        "--cmems-file",
+        default=None,
+        help="Path to a local netCDF produced by "
+             "container/download_cmems_data.py - required for "
+             "--scenario advection_cmems_file",
+    )
+    parser.add_argument("--start-lon", type=float, default=None)
+    parser.add_argument("--start-lat", type=float, default=None)
+    parser.add_argument(
+        "--start-date",
+        default=None,
+        help="ISO date, e.g. 2022-01-01 (advection_cmems_file only; must fall"
+             " within the downloaded file's time range)",
+    )
+    parser.add_argument(
         "--workdir",
         default=None,
         help="Directory to run in (default: a fresh temp dir)",
@@ -131,6 +188,9 @@ def main():
 
     workdir = args.workdir or tempfile.mkdtemp(prefix="pascal_bench_")
     profile_out = os.path.abspath(args.profile_out) if args.profile else None
+    start_date = (
+        dt.datetime.fromisoformat(args.start_date) if args.start_date else None
+    )
 
     print(f"scenario={args.scenario} mode={args.mode} n_super={args.n_super} "
           f"n_virtual={args.n_virtual} duration={args.duration}y seed={args.seed} "
@@ -140,6 +200,8 @@ def main():
     elapsed, sim = run_once(
         args.scenario, args.mode, args.n_super, args.n_virtual, args.duration,
         args.seed, args.n_workers, args.rng_seed, workdir, profile_out=profile_out,
+        cmems_file=args.cmems_file, start_lon=args.start_lon,
+        start_lat=args.start_lat, start_date=start_date,
     )
 
     n_steps = len(sim.all_steps)

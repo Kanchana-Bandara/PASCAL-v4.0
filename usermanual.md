@@ -17,4 +17,176 @@ PASCAL is the 4th iteration of a very-high biological resolution behavioral and 
 |Funding|VISTA, StatOil|VISTA, Statoil|Norwegian Research Council|Norwegian Research Council
 |
 
+## Running the model in parallel using the container
+
+This section covers the `class_parallel` branch's HPC deployment path:
+running PASCAL inside an Apptainer/Singularity container, either as a
+quick multiprocessing scaling check or as a real multi-year, 3D
+(advective) run against real ocean forcing at production scale (10,000
+super-individuals). All of the infrastructure referenced below lives in
+`container/` and `benchmarks/`; the full research log behind the design
+decisions (what was tried, measured, and why) is in `BENCHMARKING.md` -
+this section is the "how do I actually run it" summary, not a repeat of
+that log.
+
+### Why a container at all
+
+`coupler_parallel.py` parallelizes `update_lifestage()` across CPU cores
+with `multiprocessing.Pool` - useful mainly on a shared HPC cluster with
+many cores per node, where a plain conda environment is awkward to
+reproduce identically across nodes/users. The container bakes in the
+`pascal_modular` conda environment (see `container/environment.yml`) only
+- **not** this repository or `opendrift_pascal`, both of which are
+actively-developed local checkouts that get bind-mounted in at run time
+(see `container/container.def`'s `%post` comments for why baking them in
+would be wrong). This means rebuilding the image is only needed when
+`environment.yml` changes, not every time the model code changes.
+
+**Always pass `--writable-tmpfs`** (as every example below does) when
+running either app. Both apps editable-install the bind-mounted
+`opendrift_pascal`/this repo into the conda env on every invocation, which
+needs a writable container filesystem. Without the flag, this doesn't
+just fail cleanly - `pip` silently retries as a `--user` install, and
+because Apptainer bind-mounts your real `$HOME` by default, that writes
+broken editable-install metadata straight into your **host's** real
+Python environment, breaking `import opendrift`/`import coupler` outside
+the container too. `run_in_container.sh` now checks for this and refuses
+to continue rather than let it happen silently (found the hard way
+2026-08-04 - see `BENCHMARKING.md`), but the flag is still required for
+either app to actually work.
+
+### 1. Build the image
+
+From this repo's root, on a machine where you have `--fakeroot` (or root)
+- typically your own workstation, not the HPC login node, which usually
+doesn't grant ordinary users fakeroot:
+
+```bash
+apptainer build --fakeroot container/pascal.sif container/container.def
+```
+
+Takes a few minutes (mostly `mamba env create`). Copy the resulting
+`container/pascal.sif` (a single ~1.2GB file, gitignored) to the cluster
+rather than trying to build there.
+
+### 2. Download CMEMS forcing data (login node, needs internet)
+
+Real Copernicus Marine (CMEMS) ocean data is what actually drives the
+advective model at HPC scale - not the synthetic scenarios used for
+routine benchmarking. Compute nodes on most clusters have no internet
+access, so this is a separate, one-time step run on the login node (or
+anywhere with internet + credentials), **before** submitting the actual
+Slurm job - not something the compute job itself does. Credentials:
+either set `COPERNICUSMARINE_SERVICE_USERNAME`/`COPERNICUSMARINE_SERVICE_PASSWORD`,
+or add a `machine copernicusmarine` entry to `~/.netrc`.
+
+```bash
+apptainer run --app download-cmems --writable-tmpfs \
+    --bind "$(pwd)":/pascal \
+    --bind /path/to/opendrift_pascal:/opendrift \
+    container/pascal.sif \
+    --min-lon 9 --max-lon 20 --min-lat 67 --max-lat 73 \
+    --start-date 2022-01-01 --end-date 2024-01-01 \
+    --output-directory inputdata/cmems --output-filename barents_2022_2024.nc
+```
+
+Use `--output-directory inputdata/cmems` (i.e. somewhere under this repo,
+which is already bind-mounted) rather than an arbitrary path - that way
+the file is guaranteed visible inside the container at run time via the
+same `--bind`, without depending on Apptainer's default `/tmp`/`$HOME`
+auto-mounts, which some HPC sites disable for security. `*.nc` is already
+gitignored, so this won't accidentally get committed. Pick a bounding box
+generous enough for however far your super-individuals might actually
+drift over the run's duration - a multi-year run in a region with real
+currents can travel further than the ~1-2 degree margins used for short
+verification runs. See `container/download_cmems_data.py --help` for all
+options (variables, depth range, dataset ID).
+
+Re-running the same command later reuses the existing file by default
+(`--no-skip-existing` to force a fresh download).
+
+### 3. Try a small run locally first
+
+Before submitting anything to Slurm, sanity-check the downloaded file
+against a tiny/cheap run of the same scenario:
+
+```bash
+apptainer run --app run-benchmark --writable-tmpfs \
+    --bind "$(pwd)":/pascal \
+    --bind /path/to/opendrift_pascal:/opendrift \
+    container/pascal.sif \
+    --scenario advection_cmems_file \
+    --cmems-file inputdata/cmems/barents_2022_2024.nc \
+    --n-super 20 --duration 0.02 --start-date 2022-01-01 \
+    --start-lon 14.25 --start-lat 69.8 --mode sequential
+```
+
+If this completes and prints a `final_population_size` greater than 0,
+the file/aliasing/start-location are all wired correctly and it's safe to
+submit the full-scale job.
+
+### 4. Submit to Slurm
+
+Two different scripts, for two different questions:
+
+- **`submit_advection_run.sh`** - the real test: one job, a multi-year
+  advective run at 10,000 super-individuals against the file from step 2.
+  This is what you want for an actual scientific-scale HPC run:
+
+  ```bash
+  REPO_ROOT=/path/to/pascal_classparallel_branch \
+  OPENDRIFT_ROOT=/path/to/opendrift_pascal \
+  CMEMS_FILE=/path/to/pascal_classparallel_branch/inputdata/cmems/barents_2022_2024.nc \
+  N_SUPER=10000 DURATION=2 START_DATE=2022-01-01 \
+  ./container/submit_advection_run.sh
+  ```
+
+  Defaults to `MODE=sequential` and 1 cpu - see the caveat below before
+  changing `MODE=parallel`. `TIME`/`MEM`/`CPUS` are all overridable (see
+  the script's header comment); the defaults are deliberately generous,
+  *unvalidated* starting points, not a measured requirement - check the
+  actual wall time/memory of the first run (written into the job's result
+  file via `sacct`) and tighten from there.
+
+- **`submit_scaling_sweep.sh`** - a different question: whether
+  `multiprocessing.Pool` (`MODE=parallel`) actually pays off at real HPC
+  core counts. On an 8-core laptop it was measured as a **net loss**,
+  22-27% slower than sequential at every size tested up to 1500
+  super-individuals (`BENCHMARKING.md`'s Phase 2) - this sweep exists to
+  check whether that changes with more cores per worker-dispatch, by
+  running the cheap synthetic 1D scenario across a range of core counts.
+  Not the scenario you want for a real scientific run; see
+  `submit_scaling_sweep.sh`'s own header for usage. Summarize its results
+  with `python benchmarks/summarize_scaling_results.py results/`.
+
+**Caveat on `MODE=parallel`:** given the Phase 2 finding above, there is
+no evidence yet that parallel mode is faster for this model on any
+hardware tested so far - it's `sequential` by default in
+`submit_advection_run.sh` for that reason. Only switch to `parallel` for
+the real run after `submit_scaling_sweep.sh`'s results on your actual
+cluster hardware show it's worthwhile at the core count you plan to use.
+
+### Where output lands
+
+`submit_advection_run.sh` writes the model's real output
+(`output_ps.nc`, `lifestats.csv`, etc.) to
+`results/advection_<N_SUPER>si_<DURATION>y/job<slurm-job-id>/bench_run/`
+under `REPO_ROOT` - not to an ephemeral `/tmp` directory inside the
+container, which would otherwise disappear (or live on node-local scratch
+never seen again) once the job ends. `submit_scaling_sweep.sh`'s jobs
+don't do this (only their timing summary line is kept) - that sweep is
+about wall-clock scaling, not the scientific output itself.
+
+### Known limitations to be aware of before a real run
+
+- `coupler_parallel.py` is single-node only (no MPI) - parallelism is
+  limited to one node's core count.
+- `food1concentration`, `irradiance`, `pred1dens` and `pred1lightdep` are
+  constants in the CMEMS-backed scenario, not real forcing - there's no
+  working CMEMS source for them yet (an unresolved OpenDrift reader
+  interaction for the chlorophyll route, and no product at all for the
+  others). See `BENCHMARKING.md`'s "Found, NOT fixed" section for the
+  full investigation. Population dynamics driven by these variables
+  should be interpreted with that in mind.
+
 
