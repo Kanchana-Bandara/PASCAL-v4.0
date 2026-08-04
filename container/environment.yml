@@ -1,5 +1,6 @@
 name: pascal_modular
 dependencies:
+  - python=3.12
   - ipython
   - matplotlib
   - pandas
