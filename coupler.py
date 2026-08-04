@@ -132,6 +132,7 @@ class PascalSimulation(object):
 
         for this_step in self.all_steps:
             self.update_environment()
+            self.sync_environment_references()
             for isplit in np.arange(0, self.isplit):
                 self.update_lifestage()
 
@@ -150,6 +151,24 @@ class PascalSimulation(object):
 
         # Tidy up
         self.finish_run()
+
+    def sync_environment_references(self):
+        """Re-point every active individual at the current environment/
+        environment_profiles objects.
+
+        update_environment() (Pascal1D/PascalAdvection) creates brand new
+        environment/environment_profiles objects every timestep, but
+        SuperIndividual only captures those references once, in seed()
+        at construction time. Without this, an individual would keep
+        reading whatever environment existed at the timestep it was
+        seeded - frozen for its entire lifespan - rather than the
+        current one, since nothing else re-syncs an already-existing
+        individual's reference.
+        """
+        for this_individual in self.supindividuals:
+            if this_individual is not None:
+                this_individual.environment = self.tracker.environment
+                this_individual.environment_profiles = self.tracker.environment_profiles
 
     def update_lifestage(self):
         for this_individual in self.supindividuals:
