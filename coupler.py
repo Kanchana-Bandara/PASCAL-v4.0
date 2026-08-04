@@ -384,19 +384,23 @@ class PascalSimulation(object):
 
     def write_lifestats(self):
         df = pd.DataFrame(flatten_dict(self.individual_stats))
-        death_cause = np.zeros(len(df))
-        fecundity_mask = (
-            df['total_fecundity'] >= self.global_settings['fecundityceiling']
-        )
-        death_cause[fecundity_mask] = 3
-        age_mask = df['end_age'] >= self.global_settings['ageceiling']
-        death_cause[age_mask] = 2
-        threshold_mask = (
-            df['end_individuals'] <=
-            self.global_settings['virtualindividualthrehold']
-        )
-        death_cause[threshold_mask] = 1
-        df['death_cause'] = death_cause
+        # Death-related columns only exist once at least one super-individual
+        # has died (record_lifestats() is what adds them) - a short run can
+        # legitimately end with everyone still alive.
+        if 'total_fecundity' in df.columns:
+            death_cause = np.zeros(len(df))
+            fecundity_mask = (
+                df['total_fecundity'] >= self.global_settings['fecundityceiling']
+            )
+            death_cause[fecundity_mask] = 3
+            age_mask = df['end_age'] >= self.global_settings['ageceiling']
+            death_cause[age_mask] = 2
+            threshold_mask = (
+                df['end_individuals'] <=
+                self.global_settings['virtualindividualthrehold']
+            )
+            death_cause[threshold_mask] = 1
+            df['death_cause'] = death_cause
         df.to_csv(f'{self.outputfolder}/lifestats.csv')
 
     def progress(self):
