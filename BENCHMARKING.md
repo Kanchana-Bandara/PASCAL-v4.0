@@ -258,6 +258,39 @@ correct and may pay off at problem sizes/machines not tested here - just
 not recommended as the primary path forward given what's actually been
 measured.
 
+## Interlude: a frozen-environment correctness bug (unrelated to parallelization)
+
+Found while deciding exactly what in `update_lifestage()` to vectorize -
+worth fixing before vectorizing on top of it, so this landed first.
+
+`update_environment()` creates brand new `environment`/`environment_profiles`
+objects every timestep (confirmed: 72 distinct object identities across a
+72-step run, in both `Pascal1D` and `PascalAdvection`). `SuperIndividual`
+only ever captured those references once, in `seed()` at construction time,
+and nothing re-pointed an already-active individual at the new objects
+afterward. Practical effect: every super-individual read whatever
+temperature/food/irradiance/predation data existed at the exact timestep it
+was seeded, frozen for its entire lifespan, no matter how the actual
+environment evolved. Verified directly with a temperature ramp - an
+individual seeded early was still reading the t=0 value 73 timesteps later.
+This predates and is entirely independent of the parallelization work
+here, and plausibly explains the "why are the numbers dying weird" question
+already in `notes`.
+
+Fixed with `coupler.py::sync_environment_references()`, called from `run()`
+right after `update_environment()`. `tests/test_environment_sync.py`
+reproduces the bug directly (confirmed failing without the fix).
+
+**This changes population dynamics** compared to every number measured
+earlier in this document - individuals now actually respond to a changing
+environment instead of a frozen snapshot. The qualitative conclusions above
+(resolve_spatial's overcounting bug and fix, multiprocessing's IPC-overhead
+problem) aren't affected by this - they're about the *shape* of where time
+goes and a data-aggregation bug, not about population trajectories - but
+none of the absolute wall-clock/population numbers above should be assumed
+to still match run-for-run after this fix; they weren't re-measured against
+it.
+
 ### Revised phase order
 
 1. ~~Phase 0: fix test harness~~ — done.
@@ -268,11 +301,15 @@ measured.
    seeding~~ — done, correctness confirmed, but multiprocessing.Pool nets a
    *loss* (22-27% slower) at all sizes tested due to IPC overhead - see
    above.
-5. **Next: vectorize `update_lifestage`'s hot path** (structure-of-arrays
+5. ~~Fix frozen-environment bug~~ — done, see above.
+6. **Next: vectorize `update_lifestage`'s hot path** (structure-of-arrays
    across individuals sharing a developmental stage) - no IPC overhead
    ceiling, and the target functions are already known from Phase 1's
-   profile.
-6. Container + HPC scaling test - now specifically useful for checking
+   profile. Will re-profile first, since the environment-sync fix likely
+   shifts which functions actually dominate now that individuals
+   experience realistic (changing) conditions instead of a frozen
+   snapshot.
+7. Container + HPC scaling test - now specifically useful for checking
    whether the multiprocessing economics differ at genuinely large
    population sizes / multi-node, independent of whatever vectorization
    achieves single-node.
