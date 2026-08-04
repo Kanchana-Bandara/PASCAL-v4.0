@@ -194,9 +194,13 @@ class SuperIndividual(object):
 
     def update_vert(self):
         self.zidx = np.argmin(abs(self.global_settings["depthrange"] - self.zpos))
-
-        self.maxdepth = np.max(-self.environment_profiles["z"])
-        self.mindepth = np.min(-self.environment_profiles["z"])
+        # maxdepth/mindepth are set externally by
+        # coupler.py::sync_environment_references(), once per timestep for
+        # every individual, rather than recomputed here per-individual:
+        # depth ('z') has no per-individual axis (it's the same water
+        # column grid for everyone), so redoing this max/min per individual
+        # per timestep was pure redundant work - it was ~17% of total
+        # runtime by itself (see BENCHMARKING.md).
 
     def get_profile(self, var):
         if self.depth_interpolate:

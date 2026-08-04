@@ -154,7 +154,7 @@ class PascalSimulation(object):
 
     def sync_environment_references(self):
         """Re-point every active individual at the current environment/
-        environment_profiles objects.
+        environment_profiles objects, and refresh their maxdepth/mindepth.
 
         update_environment() (Pascal1D/PascalAdvection) creates brand new
         environment/environment_profiles objects every timestep, but
@@ -164,11 +164,23 @@ class PascalSimulation(object):
         seeded - frozen for its entire lifespan - rather than the
         current one, since nothing else re-syncs an already-existing
         individual's reference.
+
+        maxdepth/mindepth are computed once here rather than once per
+        individual in SuperIndividual.update_vert(): depth ('z') has no
+        per-individual axis - every individual sees the same water column
+        grid - so recomputing max/min of it per individual per timestep
+        was pure redundant work (measured at ~17% of total runtime; see
+        BENCHMARKING.md).
         """
+        z = self.tracker.environment_profiles["z"]
+        maxdepth = np.max(-z)
+        mindepth = np.min(-z)
         for this_individual in self.supindividuals:
             if this_individual is not None:
                 this_individual.environment = self.tracker.environment
                 this_individual.environment_profiles = self.tracker.environment_profiles
+                this_individual.maxdepth = maxdepth
+                this_individual.mindepth = mindepth
 
     def update_lifestage(self):
         for this_individual in self.supindividuals:
