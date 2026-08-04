@@ -164,20 +164,24 @@ class PascalSimulation(object):
 
         c = []
         z = []
+        env_indices = []
 
+        # Computed once and reused below (rather than calling
+        # active_supindividuals()/environment_indices() again) - safe
+        # because nothing mutates self.supindividuals within this method.
         for si in self.active_supindividuals():
             c_add, z_add, d_add = si.get_spatial_log_data(
                 self.datalogger.spatial_var_list
             )
             c.append(c_add)
             z.append(z_add)
+            env_indices.append(si.environment_index)
             for k,v in data_dict.items():
                 v.append(d_add[k])
 
         for k,v in data_dict.items():
             data_dict[k] = np.asarray(v)
 
-        env_indices = self.environment_indices()
         cxyz = np.stack([
             np.asarray(c),
             self.tracker.elements.lon[env_indices],
@@ -188,12 +192,20 @@ class PascalSimulation(object):
         self.datalogger.log_spatial(cxyz, data_dict)
 
     def respawn(self):
+        # Computed once and reused throughout (including in the final reset
+        # loop below) instead of calling active_supindividuals() repeatedly -
+        # safe because self.seed() only ever fills previously-None slots, so
+        # this snapshot stays valid; newly-seeded individuals already start
+        # with potentialfecundity=0, so they don't need to be in the final
+        # reset loop either.
+        active = self.active_supindividuals()
+
         nspaces = np.sum(np.asarray(self.supindividuals) == None)
         if nspaces > 0:  # Skip if there ain't no space
             if self.current_time.year == self.start_time.year:
                 nseeds = self.seeding_rate
-                seed_locations_ind = np.random.choice(len(self.start_locations), 
-                    size=nseeds, 
+                seed_locations_ind = np.random.choice(len(self.start_locations),
+                    size=nseeds,
                     replace=True
                 )
                 seed_locations = [self.start_locations[i] for i in seed_locations_ind]
@@ -202,12 +214,12 @@ class PascalSimulation(object):
             # The blendrn/threshold process is individual based
             inherited_genome = flatten_list([
                 [si.get_child_genome() for k in np.arange(0, si.potentialfecundity)]
-                for si in self.active_supindividuals()
+                for si in active
             ])
             inherited_locations = flatten_list([
                 [self.tracker.elements.lon[si.environment_index],
                  self.tracker.elements.lat[si.environment_index]]
-                for si in self.active_supindividuals()
+                for si in active
                 for k in np.arange(0, si.potentialfecundity)
             ])
 
@@ -228,7 +240,7 @@ class PascalSimulation(object):
                             print(f'__respawn__ Spawning {nspawns}')
                     else:
                         adjusted_genome, adjusted_locations = self.fecundity_proportional_selection(
-                            nspawns
+                            nspawns, active
                         )
                         self.seed(nspaces, adjusted_locations, genome=adjusted_genome)
                         if self.verbose:
@@ -242,7 +254,7 @@ class PascalSimulation(object):
                     self.seed(nspawns, inherited_locations, genome=inherited_genome)
                 else:
                     adjusted_genome, adjusted_locations = self.fecundity_proportional_selection(
-                        nspawns
+                        nspawns, active
                     )
                     if self.verbose:
                         print(
@@ -259,7 +271,7 @@ class PascalSimulation(object):
                         print(f'__respawn__ Seeding {nseeds}')
 
         # Reset potential fecundity in individuals
-        for si in self.active_supindividuals():
+        for si in active:
             si.potentialfecundity = 0
 
     def seed(self, nseeds, locations, genome=None):
@@ -290,9 +302,12 @@ class PascalSimulation(object):
             }
             self.next_unique_id += 1
 
-    def fecundity_proportional_selection(self, nspaces):
+    def fecundity_proportional_selection(self, nspaces, active=None):
+        if active is None:
+            active = self.active_supindividuals()
+
         potentialfecundity = [
-            si.potentialfecundity for si in self.active_supindividuals()
+            si.potentialfecundity for si in active
         ]
         nspawns = np.sum(potentialfecundity)
         realizedfecundity = np.round(
@@ -311,13 +326,13 @@ class PascalSimulation(object):
 
         adjusted_genome = flatten_list([
             [si.get_child_genome() for k in np.arange(0, rf)]
-            for si, rf in zip(self.active_supindividuals(), realizedfecundity)
+            for si, rf in zip(active, realizedfecundity)
         ])
 
         adjusted_locations = flatten_list([
             [self.tracker.elements.lon[si.environment_index],
              self.tracker.elements.lat[si.environment_index]]
-            for si, rf in zip(self.active_supindividuals(), realizedfecundity)
+            for si, rf in zip(active, realizedfecundity)
             for k in np.arange(0, rf)
         ])
 
@@ -326,16 +341,19 @@ class PascalSimulation(object):
     def clean_dead(self):
         # We can use active individuals because Nones should always be
         # at the end of the array
+        # Computed once and reused below instead of calling
+        # active_supindividuals() again per removed individual per loop.
+        active = self.active_supindividuals()
         remove = [
-            j for j, si in enumerate(self.active_supindividuals())
+            j for j, si in enumerate(active)
             if si.lifestatus == 0
         ]
         for i in remove:
-            self.record_lifestats(self.active_supindividuals()[i])
+            self.record_lifestats(active[i])
 
         # Keep track of free slots in the particle tracker
         for i in remove:
-            self.free_env_indices.append(self.active_supindividuals()[i].environment_index)
+            self.free_env_indices.append(active[i].environment_index)
 
         if len(remove) > 0:
             [self.supindividuals.pop(i - j) for j, i in enumerate(remove)]
@@ -467,12 +485,13 @@ class Pascal1D(PascalSimulation):
     def gene_hunt(self):
         # In 1-D all the animals are near to each other so all females are
         # considered near to all males, therefore just pick a random male
+        active = self.active_supindividuals()
         noninseminated_females = [
-            i for i in self.active_supindividuals()
+            i for i in active
             if i.sex == 'F' and i.inseminationstate == 0
         ]
-        males = [i for i in self.active_supindividuals() if i.sex == 'M']
-        
+        males = [i for i in active if i.sex == 'M']
+
         if len(males) > 0:
             for this_f in noninseminated_females:
                 selected_male = np.random.choice(males)
@@ -532,14 +551,15 @@ class PascalAdvection(PascalSimulation):
 
     def gene_hunt(self):
         # Get genes from nearby males
+        active = self.active_supindividuals()
         noninseminated_females = [
-            i for i in self.active_supindividuals()
+            i for i in active
             if i.sex == 'F' and i.inseminationstate == 0
         ]
-        
+
         all_males = [
-            i for i in self.active_supindividuals() if i.sex == 'M']
-        
+            i for i in active if i.sex == 'M']
+
         all_males_ll = np.stack([
             self.tracker.elements.lon[
                 [j.environment_index for j in all_males]
