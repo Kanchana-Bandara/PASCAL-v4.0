@@ -25,3 +25,4 @@ test.py
 .benchmarks
 profile.stats
 *.egg-info/
+/results/

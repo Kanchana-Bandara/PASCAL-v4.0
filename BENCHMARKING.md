@@ -428,9 +428,11 @@ Full test suite (`tests/`, 11 tests) passes throughout.
    Found and fixed a real 3D-specific performance issue (`get_profile()`
    caching), and found (not fixed - needs domain input) a serious
    correctness gap in the CMEMS reader configuration.
-8. Container + HPC scaling test - useful both on its own merits and for
-   checking whether the multiprocessing economics found in Phase 2 differ
-   at genuinely large population sizes / multi-node.
+8. ~~Container + HPC scaling test infrastructure~~ - done and validated
+   locally (build, bind-mount, run, sbatch logic, summarizer all confirmed
+   working end-to-end - see below). **Still outstanding:** actually
+   running the sweep on real HPC hardware, which needs a genuine Slurm
+   cluster this environment doesn't have.
 
 This file will be extended (not replaced) as each phase lands, with real
 numbers each time — no illustrative/example output going forward.
@@ -636,3 +638,60 @@ needs live network access and real Copernicus Marine credentials, making
 it unsuitable for repeatable/offline CI-style testing - it's intended for
 manual/occasional verification of the live-data pathway specifically, the
 same category as `advection_test_barents.py` itself.
+
+## Container + HPC scaling test
+
+Infrastructure (`container/`): `container.def` (Apptainer definition -
+bakes in the `pascal_modular` conda env only, not this repo or
+`opendrift_pascal`, which are bind-mounted at runtime since both are
+actively-developed local checkouts), `run_in_container.sh` (editable-installs
+both bind-mounted packages, then execs the given command), `hpc_scaling_test.sbatch`
+(one Slurm job: runs `benchmarks/run_local_benchmark.py` inside the
+container and writes a `results/scaling_cpus<N>_<mode>_job<id>.txt` file),
+`submit_scaling_sweep.sh` (submits the sequential baseline plus one parallel
+job per core count in `CORE_COUNTS`), and `benchmarks/summarize_scaling_results.py`
+(parses the result files into a speedup/efficiency table).
+
+**Validated locally this session** (no Slurm available on this 8-core
+laptop, so this validates wiring/correctness, not real scaling numbers):
+
+1. Built the image: `apptainer build --fakeroot container/pascal.sif
+   container/container.def` - succeeded, 1.2GB, ~5 minutes (mostly `mamba
+   env create` + the `copernicusmarine` pip install).
+2. Ran the benchmark inside the built container via `run_in_container.sh`,
+   bind-mounting this repo and `opendrift_pascal`, in both `--mode
+   sequential` and `--mode parallel` - both completed correctly and
+   printed the expected `wall_time_s=...`/`final_population_size=...`
+   output.
+3. Ran `hpc_scaling_test.sbatch` itself (not via `sbatch` - exported
+   `SLURM_CPUS_PER_TASK`/`SLURM_JOB_ID` by hand, since there's no Slurm
+   here) for one sequential and one parallel job, confirming it writes a
+   correctly-named result file and doesn't fail on the `sacct` call when
+   `sacct` doesn't exist (guarded by `|| true`).
+4. Fed those result files into `summarize_scaling_results.py` - produced a
+   correct table (1 cpu sequential baseline vs. 4 cpus parallel). The
+   4-cpu run was slower than sequential at this toy size (50
+   super-individuals, 0.1 simulated years) - expected and not meaningful
+   as a scaling result on its own (too small a problem, too few cores, a
+   laptop not a cluster), but consistent with Phase 2's finding that
+   `multiprocessing.Pool` doesn't pay off at the sizes tested so far.
+   Deleted these smoke-test result files afterward; added `/results/` to
+   `.gitignore` (mirrors the existing `*.sif` ignore) so real sweep output
+   doesn't get committed by accident.
+
+No bugs found in the container/Slurm scripts themselves - the whole
+pipeline (build -> bind-mount -> editable-install -> run -> collect ->
+summarize) is correctly wired end-to-end.
+
+**Not done, and can't be from here:** the actual point of this
+infrastructure - a real multi-core (and eventually multi-node) Slurm
+scaling sweep on genuine HPC hardware, to check whether
+`multiprocessing.Pool`'s economics (a 22-27% loss at up to 1500
+super-individuals on 8 laptop cores - Phase 2) hold or reverse at the
+32-128+ core counts a real node offers, where each worker gets much more
+work per IPC round-trip. That needs `container/pascal.sif` (or a rebuild
+of it) plus this repo and `opendrift_pascal` copied to an actual cluster,
+then `REPO_ROOT=... OPENDRIFT_ROOT=... ./container/submit_scaling_sweep.sh`
+run from a login/submit node. `coupler_parallel.py` remains single-node
+only (no MPI) - see `submit_scaling_sweep.sh`'s own comments for why a
+multi-node test would be separate, larger work.
