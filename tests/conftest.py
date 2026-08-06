@@ -21,10 +21,18 @@ for _bad in ("", str(REPO_ROOT)):
     while _bad in sys.path:
         sys.path.remove(_bad)
 
-# `pip install -e .` (setup.py already declares this package) makes
-# coupler/individual/etc. importable without needing the repo root on
-# sys.path at all; only benchmarks/ needs adding here since it isn't part
-# of that install.
+# `pip install -e .` (setup.py already declares this package) makes the
+# `pascal` package (pascal.coupler/pascal.individual/etc.) importable
+# without needing the repo root on sys.path at all; only benchmarks/ needs
+# adding here since it isn't part of that install.
 BENCHMARKS_DIR = REPO_ROOT / "benchmarks"
 if str(BENCHMARKS_DIR) not in sys.path:
     sys.path.insert(0, str(BENCHMARKS_DIR))
+
+SCENARIOS_DIR = REPO_ROOT / "scenarios"
+if str(SCENARIOS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCENARIOS_DIR))
+
+CONFIG_DIR = REPO_ROOT / "config"
+if str(CONFIG_DIR) not in sys.path:
+    sys.path.insert(0, str(CONFIG_DIR))

@@ -1,9 +1,9 @@
 from math import e
-from individual import SuperIndividual
-from data_logger import OutputLogger
-from pascal_drift import PascalDrift
-from utils import dotdict, flatten_list, flatten_dict, points_within_distance
-import pascal42_mod_survival as sv
+from .individual import SuperIndividual
+from .data_logger import OutputLogger
+from .pascal_drift import PascalDrift
+from .utils import dotdict, flatten_list, flatten_dict, points_within_distance
+from .biology import survival as sv
 
 import datetime as dt
 import numpy as np

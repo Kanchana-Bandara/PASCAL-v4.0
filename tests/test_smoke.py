@@ -5,8 +5,8 @@ at all" before Phase 2 starts modifying coupler_parallel.py. It is not a
 scientific correctness test.
 """
 
-from coupler import Pascal1D
-from scenario import build_1d_scenario
+from pascal.coupler import Pascal1D
+from builders import build_1d_scenario
 
 
 def test_sequential_1d_run_completes(tmp_path, monkeypatch):

@@ -1,7 +1,7 @@
 """Tests for benchmarks/summarize_scaling_results.py's parsing logic.
 
 No Slurm/HPC access needed - just checks the result-file parser against
-synthetic files matching container/hpc_scaling_test.sbatch's naming and
+synthetic files matching hpc/submit.sbatch's naming and
 content convention.
 """
 

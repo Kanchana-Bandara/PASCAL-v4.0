@@ -7,6 +7,22 @@ illustrative/fabricated benchmark numbers (e.g. "Sequential: 245.32s,
 Parallel: 41.18s, 5.96x speedup") rather than measurements. Everything below
 was actually executed.
 
+**2026-08-06 repository restructure**: this log's historical commands
+below (`container/...`, `benchmarks/scenario.py`, bare `coupler.py`/
+`individual.py`/`pascal42_mod_*.py` paths) reflect the repository layout
+*at the time each measurement was taken* - preserved as-recorded rather
+than rewritten, since this file's whole premise is "everything here was
+actually executed" as described. They won't run verbatim against the
+current layout: model code moved under `pascal/` (`pascal.coupler`,
+`pascal.individual`, `pascal.biology.*` for the old `pascal42_mod_*.py`
+files), the scenario builders moved from `benchmarks/scenario.py` to
+`scenarios/builders.py`, and `container/` was renamed `hpc/` with a new
+single YAML-config-driven entrypoint (`run.py` - see `config/runs/*.yaml`
+and `config/schema.py`) replacing the CLI-flags/env-vars surface most
+commands below use. See `usermanual.md`'s "Running the model in parallel
+using the container" section for the current workflow. The technical
+findings/reasoning throughout are unaffected - only file locations moved.
+
 ## What's here
 
 - `benchmarks/scenario.py` — builds a self-contained synthetic `Pascal1D`
@@ -32,7 +48,7 @@ Run a benchmark + profile:
 ```bash
 python benchmarks/run_local_benchmark.py --n-super 200 --duration 0.5 \
     --profile --profile-out profile.stats
-python view_profile.py profile.stats   # richer breakdown, still useful as-is
+python benchmarks/view_profile.py profile.stats   # richer breakdown, still useful as-is
 ```
 
 ## A bug this surfaced (fixed)

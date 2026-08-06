@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Local benchmark/profiling harness for the PASCAL simulation.
 
-Runs a synthetic scenario (benchmarks/scenario.py) at a configurable size,
+Runs a synthetic scenario (scenarios/builders.py) at a configurable size,
 sequential or parallel, optionally under cProfile.
 
 Usage:
     # Phase 1 baseline: sequential, single water column, cheap to run
     python benchmarks/run_local_benchmark.py --scenario 1d --n-super 200 \\
         --duration 0.5 --profile --profile-out profile.stats
-    python view_profile.py profile.stats
+    python benchmarks/view_profile.py profile.stats
 
     # Phase 2: advection scenario (one tracker element per super-individual,
     # so environment_profiles arrays actually have shape
@@ -20,7 +20,7 @@ Usage:
         --n-super 200 --duration 0.5 --mode parallel --n-workers 4
 
     # Phase 8: real 3D run against a local CMEMS file (see
-    # container/download_cmems_data.py to produce one first)
+    # hpc/download_cmems_data.py to produce one first)
     python benchmarks/run_local_benchmark.py --scenario advection_cmems_file \\
         --cmems-file /path/to/barents_2022_2024.nc --n-super 10000 \\
         --duration 2 --start-date 2022-01-01 --mode sequential
@@ -46,11 +46,11 @@ for _bad in ("", str(REPO_ROOT)):
     while _bad in sys.path:
         sys.path.remove(_bad)
 
-BENCHMARKS_DIR = REPO_ROOT / "benchmarks"
-if str(BENCHMARKS_DIR) not in sys.path:
-    sys.path.insert(0, str(BENCHMARKS_DIR))
+SCENARIOS_DIR = REPO_ROOT / "scenarios"
+if str(SCENARIOS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCENARIOS_DIR))
 
-from scenario import (  # noqa: E402
+from builders import (  # noqa: E402
     build_1d_scenario,
     build_advection_scenario,
     build_cmems_advection_scenario_from_file,
@@ -68,8 +68,8 @@ def build_sim(scenario_name, mode, n_super, n_virtual, duration, seed, n_workers
             seed=seed,
             headless="bench_run",
         )
-        from coupler import Pascal1D
-        from coupler_parallel import Pascal1DParallel
+        from pascal.coupler import Pascal1D
+        from pascal.coupler_parallel import Pascal1DParallel
         sequential_cls, parallel_cls = Pascal1D, Pascal1DParallel
     elif scenario_name == "advection":
         kwargs = build_advection_scenario(
@@ -79,14 +79,14 @@ def build_sim(scenario_name, mode, n_super, n_virtual, duration, seed, n_workers
             seed=seed,
             headless="bench_run",
         )
-        from coupler import PascalAdvection
-        from coupler_parallel import PascalAdvectionParallel
+        from pascal.coupler import PascalAdvection
+        from pascal.coupler_parallel import PascalAdvectionParallel
         sequential_cls, parallel_cls = PascalAdvection, PascalAdvectionParallel
     elif scenario_name == "advection_cmems_file":
         if cmems_file is None:
             raise ValueError(
                 "--cmems-file is required for --scenario advection_cmems_file"
-                " (see container/download_cmems_data.py)"
+                " (see hpc/download_cmems_data.py)"
             )
         scenario_kwargs = {}
         if start_lon is not None and start_lat is not None:
@@ -102,8 +102,8 @@ def build_sim(scenario_name, mode, n_super, n_virtual, duration, seed, n_workers
             headless="bench_run",
             **scenario_kwargs,
         )
-        from coupler import PascalAdvection
-        from coupler_parallel import PascalAdvectionParallel
+        from pascal.coupler import PascalAdvection
+        from pascal.coupler_parallel import PascalAdvectionParallel
         sequential_cls, parallel_cls = PascalAdvection, PascalAdvectionParallel
     else:
         raise ValueError(scenario_name)
@@ -168,7 +168,7 @@ def main():
         "--cmems-file",
         default=None,
         help="Path to a local netCDF produced by "
-             "container/download_cmems_data.py - required for "
+             "hpc/download_cmems_data.py - required for "
              "--scenario advection_cmems_file",
     )
     parser.add_argument("--start-lon", type=float, default=None)

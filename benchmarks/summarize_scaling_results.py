@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Summarize an HPC scaling sweep's results into a speedup/efficiency table.
 
-Reads container/hpc_scaling_test.sbatch's output files (one per job,
+Reads hpc/submit.sbatch's output files (one per job,
 named scaling_cpus<N>_<mode>_job<id>.txt, containing run_local_benchmark.py's
 stdout including a `wall_time_s=...` line) and prints a table comparing
 each parallel job's wall time against the single sequential baseline.

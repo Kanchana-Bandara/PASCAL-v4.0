@@ -29,7 +29,7 @@ fi
 # the host by default, that silent fallback writes editable-install
 # metadata straight into the *host's* real ~/.local/lib/pythonX.Y/
 # site-packages, hardcoded with container-internal paths - which breaks
-# `import opendrift`/`import coupler` on the host outside the container
+# `import opendrift`/`import pascal` on the host outside the container
 # entirely, for anyone who forgets the flag. See BENCHMARKING.md.
 site_packages="$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
 if [ ! -w "$site_packages" ]; then

@@ -1,0 +1,27 @@
+# Tiny/cheap sanity check of the same file/aliasing/start-location as
+# advection_hpc_barents.yaml, before submitting the real HPC run - see
+# usermanual.md step 3. Completes in seconds; a non-zero
+# final_population_size means it's safe to submit the full-scale job.
+
+run:
+  name: advection_quick_check
+  scenario: advection_cmems_file
+  mode: sequential
+  seed: 0
+
+population:
+  n_super_individuals: 20
+  n_virtual_per_super: 10000
+  seeding_rate: 5
+
+time:
+  start_date: "2022-01-01"
+  duration_years: 0.02
+  timestep_seconds: 21600
+
+location:
+  start_lon: 14.25
+  start_lat: 69.8
+
+reader:
+  cmems_file: inputdata/cmems/barents_2022_2024.nc

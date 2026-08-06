@@ -4,7 +4,7 @@ Unlike build_cmems_advection_scenario() (the live-reader version, not in
 this suite - needs network + real Copernicus Marine credentials), the
 file-based version only needs a local netCDF, so it's fully testable here:
 this builds a small but properly CF-tagged synthetic file (same
-dims/variable names/standard_names as a real container/download_cmems_data.py
+dims/variable names/standard_names as a real hpc/download_cmems_data.py
 download - see that script's module docstring for the mapping) rather than
 downloading real data, and checks the actual reader construction, variable
 aliasing and a full tiny simulation run against it - not just that the
@@ -17,13 +17,13 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from coupler import PascalAdvection
-from scenario import build_cmems_advection_scenario_from_file
+from pascal.coupler import PascalAdvection
+from builders import build_cmems_advection_scenario_from_file
 
 
 def _write_synthetic_cmems_file(path):
     """A minimal file with the same shape/attrs contract as a real
-    container/download_cmems_data.py download: thetao/mlotst without a
+    hpc/download_cmems_data.py download: thetao/mlotst without a
     standard_name PASCAL recognizes directly (relying on
     build_cmems_advection_scenario_from_file's explicit
     standard_name_mapping override, exactly as the real download's

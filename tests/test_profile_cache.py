@@ -14,8 +14,8 @@ from unittest.mock import patch
 
 import numpy as np
 
-from coupler import PascalAdvection
-from scenario import build_advection_scenario
+from pascal.coupler import PascalAdvection
+from builders import build_advection_scenario
 
 
 def test_advection_scenario_actually_needs_interpolation(tmp_path, monkeypatch):
@@ -60,7 +60,7 @@ def test_get_profile_only_interpolates_once_per_variable_per_timestep(tmp_path, 
     sim.sync_environment_references()  # start from a known-clean cache
     assert si._profile_cache == {}
 
-    with patch("individual.np.interp", wraps=np.interp) as mock_interp:
+    with patch("pascal.individual.np.interp", wraps=np.interp) as mock_interp:
         si.get_profile("temperature")
         si.get_profile("temperature")
         si.get_zi("temperature")

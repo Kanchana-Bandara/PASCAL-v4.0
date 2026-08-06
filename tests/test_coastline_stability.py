@@ -17,8 +17,8 @@ position) instead, which never removes elements.
 
 import numpy as np
 
-from coupler import PascalAdvection
-from scenario import build_advection_scenario
+from pascal.coupler import PascalAdvection
+from builders import build_advection_scenario
 
 
 def test_coastline_action_defaults_to_previous(tmp_path, monkeypatch):

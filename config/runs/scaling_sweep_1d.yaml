@@ -1,0 +1,22 @@
+# Cheap synthetic 1D scenario for the multiprocessing.Pool core-count
+# scaling sweep (see BENCHMARKING.md Phase 2 and hpc/submit.sh's sweep
+# mode) - answers "does parallel mode pay off at N cores", not a
+# scientific run in itself. mode/n_workers are normally overridden per
+# sweep point rather than edited here:
+#   python run.py --config config/runs/scaling_sweep_1d.yaml \
+#       --override run.mode=parallel --override run.n_workers=8
+
+run:
+  name: scaling_sweep
+  scenario: "1d"
+  mode: sequential
+  seed: 0
+
+population:
+  n_super_individuals: 2000
+  n_virtual_per_super: 10000
+  seeding_rate: 10
+
+time:
+  duration_years: 0.3
+  timestep_seconds: 21600

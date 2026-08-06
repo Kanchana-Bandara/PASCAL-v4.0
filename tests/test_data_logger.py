@@ -16,7 +16,7 @@ simultaneously, spatial output was inflated by roughly that factor.
 import numpy as np
 import pytest
 
-from data_logger import OutputLogger
+from pascal.data_logger import OutputLogger
 
 
 def make_logger(tmp_path, devstages=13, lon=(0, 1, 2), lat=(0, 1), depth=(0, 1, 2, 3)):

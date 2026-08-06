@@ -18,9 +18,9 @@ Two separate concerns, tested separately:
 
 import numpy as np
 
-from coupler import PascalAdvection
-from coupler_parallel import PascalAdvectionParallel, _init_worker_rng
-from scenario import build_advection_scenario
+from pascal.coupler import PascalAdvection
+from pascal.coupler_parallel import PascalAdvectionParallel, _init_worker_rng
+from builders import build_advection_scenario
 
 
 def test_parallel_matches_sequential_for_deterministic_growth_path(tmp_path, monkeypatch):

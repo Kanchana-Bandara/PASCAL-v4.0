@@ -6,7 +6,7 @@ not, strcat <= 0.10 vs not)."""
 import numpy as np
 import pytest
 
-import pascal42_mod_survival as sv
+from pascal.biology import survival as sv
 
 
 def random_cases(rng, n=500):

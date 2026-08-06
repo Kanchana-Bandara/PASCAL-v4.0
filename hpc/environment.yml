@@ -35,4 +35,5 @@ dependencies:
   - roaring-landmask>=0.7
   - traja
   - adios_db
+  - pyyaml
   - pip

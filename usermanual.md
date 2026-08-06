@@ -24,10 +24,14 @@ running PASCAL inside an Apptainer/Singularity container, either as a
 quick multiprocessing scaling check or as a real multi-year, 3D
 (advective) run against real ocean forcing at production scale (10,000
 super-individuals). All of the infrastructure referenced below lives in
-`container/` and `benchmarks/`; the full research log behind the design
+`hpc/`, `config/` and `scenarios/`; the full research log behind the design
 decisions (what was tried, measured, and why) is in `BENCHMARKING.md` -
 this section is the "how do I actually run it" summary, not a repeat of
 that log.
+
+A real run is driven entirely by one YAML config (see `config/runs/*.yaml`
+and `config/schema.py` for every field a config can set) instead of a long
+list of CLI flags/env vars - see step 4 below.
 
 ### Why a container at all
 
@@ -35,10 +39,10 @@ that log.
 with `multiprocessing.Pool` - useful mainly on a shared HPC cluster with
 many cores per node, where a plain conda environment is awkward to
 reproduce identically across nodes/users. The container bakes in the
-`pascal_modular` conda environment (see `container/environment.yml`) only
+`pascal_modular` conda environment (see `hpc/environment.yml`) only
 - **not** this repository or `opendrift_pascal`, both of which are
 actively-developed local checkouts that get bind-mounted in at run time
-(see `container/container.def`'s `%post` comments for why baking them in
+(see `hpc/container.def`'s `%post` comments for why baking them in
 would be wrong). This means rebuilding the image is only needed when
 `environment.yml` changes, not every time the model code changes.
 
@@ -62,11 +66,11 @@ From this repo's root, on a machine where you have `--fakeroot` (or root)
 doesn't grant ordinary users fakeroot:
 
 ```bash
-apptainer build --fakeroot container/pascal.sif container/container.def
+apptainer build --fakeroot hpc/pascal.sif hpc/container.def
 ```
 
 Takes a few minutes (mostly `mamba env create`). Copy the resulting
-`container/pascal.sif` (a single ~1.2GB file, gitignored) to the cluster
+`hpc/pascal.sif` (a single ~1.2GB file, gitignored) to the cluster
 rather than trying to build there.
 
 ### 2. Download CMEMS forcing data (login node, needs internet)
@@ -84,7 +88,7 @@ or add a `machine copernicusmarine` entry to `~/.netrc`.
 apptainer run --app download-cmems --writable-tmpfs \
     --bind "$(pwd)":/pascal \
     --bind /path/to/opendrift_pascal:/opendrift \
-    container/pascal.sif \
+    hpc/pascal.sif \
     --min-lon 9 --max-lon 20 --min-lat 67 --max-lat 73 \
     --start-date 2022-01-01 --end-date 2024-01-01 \
     --output-directory inputdata/cmems --output-filename barents_2022_2024.nc
@@ -99,46 +103,53 @@ gitignored, so this won't accidentally get committed. Pick a bounding box
 generous enough for however far your super-individuals might actually
 drift over the run's duration - a multi-year run in a region with real
 currents can travel further than the ~1-2 degree margins used for short
-verification runs. See `container/download_cmems_data.py --help` for all
-options (variables, depth range, dataset ID).
+verification runs. See `hpc/download_cmems_data.py --help` for all
+options (variables, depth range, dataset ID). This is also the path a
+run config's `reader.cmems_file` field (step 4) needs to point at.
 
 Re-running the same command later reuses the existing file by default
 (`--no-skip-existing` to force a fresh download).
 
-### 3. Try a small run locally first
+### 3. Write (or reuse) a run config, and try it small first
 
-Before submitting anything to Slurm, sanity-check the downloaded file
-against a tiny/cheap run of the same scenario:
+A real run is defined entirely by one YAML file - see
+`config/runs/advection_hpc_barents.yaml` for the production-scale example
+(10,000 super-individuals, 2 years) and `config/schema.py` for every field
+a config can set (population size, timing, location, reader/tracker
+settings, biology parameters, output options). Copy/edit one of
+`config/runs/*.yaml` for your own run, or just override individual fields
+at submission time with `--override key.path=value` (repeatable) - no
+need to write a new file for a one-off change.
+
+Before submitting anything to Slurm, sanity-check the config (and the
+downloaded file/aliasing/start-location) with a tiny/cheap run of the same
+scenario - `config/runs/advection_quick_check.yaml` is exactly this,
+already sized down:
 
 ```bash
-apptainer run --app run-benchmark --writable-tmpfs \
+apptainer run --app run --writable-tmpfs \
     --bind "$(pwd)":/pascal \
     --bind /path/to/opendrift_pascal:/opendrift \
-    container/pascal.sif \
-    --scenario advection_cmems_file \
-    --cmems-file inputdata/cmems/barents_2022_2024.nc \
-    --n-super 20 --duration 0.02 --start-date 2022-01-01 \
-    --start-lon 14.25 --start-lat 69.8 --mode sequential
+    hpc/pascal.sif \
+    --config config/runs/advection_quick_check.yaml
 ```
 
 If this completes and prints a `final_population_size` greater than 0,
-the file/aliasing/start-location are all wired correctly and it's safe to
-submit the full-scale job.
+it's safe to submit the full-scale job.
 
 ### 4. Submit to Slurm
 
 Two different scripts, for two different questions:
 
-- **`submit_advection_run.sh`** - the real test: one job, a multi-year
-  advective run at 10,000 super-individuals against the file from step 2.
-  This is what you want for an actual scientific-scale HPC run:
+- **`hpc/submit.sh`** - the real test: one job, a multi-year advective run
+  at 10,000 super-individuals against the file from step 2. This is what
+  you want for an actual scientific-scale HPC run:
 
   ```bash
   REPO_ROOT=/path/to/pascal_classparallel_branch \
   OPENDRIFT_ROOT=/path/to/opendrift_pascal \
-  CMEMS_FILE=/path/to/pascal_classparallel_branch/inputdata/cmems/barents_2022_2024.nc \
-  N_SUPER=10000 DURATION=2 START_DATE=2022-01-01 \
-  ./container/submit_advection_run.sh
+  CONFIG=config/runs/advection_hpc_barents.yaml \
+  ./hpc/submit.sh
   ```
 
   Defaults to `MODE=sequential` and 1 cpu - see the caveat below before
@@ -146,36 +157,42 @@ Two different scripts, for two different questions:
   the script's header comment); the defaults are deliberately generous,
   *unvalidated* starting points, not a measured requirement - check the
   actual wall time/memory of the first run (written into the job's result
-  file via `sacct`) and tighten from there.
+  file via `sacct`) and tighten from there. Anything the config file
+  itself doesn't already cover for this specific submission (e.g. a
+  different `reader.cmems_file` path on this cluster) can be added via
+  `OVERRIDES="reader.cmems_file=... time.start_date=..."` (space-separated
+  `key.path=value` tokens).
 
-- **`submit_scaling_sweep.sh`** - a different question: whether
+- **`hpc/submit_sweep.sh`** - a different question: whether
   `multiprocessing.Pool` (`MODE=parallel`) actually pays off at real HPC
   core counts. On an 8-core laptop it was measured as a **net loss**,
   22-27% slower than sequential at every size tested up to 1500
   super-individuals (`BENCHMARKING.md`'s Phase 2) - this sweep exists to
   check whether that changes with more cores per worker-dispatch, by
-  running the cheap synthetic 1D scenario across a range of core counts.
-  Not the scenario you want for a real scientific run; see
-  `submit_scaling_sweep.sh`'s own header for usage. Summarize its results
-  with `python benchmarks/summarize_scaling_results.py results/`.
+  running the cheap synthetic 1D scenario (`config/runs/scaling_sweep_1d.yaml`)
+  across a range of core counts. Not the scenario you want for a real
+  scientific run; see `submit_sweep.sh`'s own header for usage. Summarize
+  its results with `python benchmarks/summarize_scaling_results.py results/`.
 
 **Caveat on `MODE=parallel`:** given the Phase 2 finding above, there is
 no evidence yet that parallel mode is faster for this model on any
-hardware tested so far - it's `sequential` by default in
-`submit_advection_run.sh` for that reason. Only switch to `parallel` for
-the real run after `submit_scaling_sweep.sh`'s results on your actual
-cluster hardware show it's worthwhile at the core count you plan to use.
+hardware tested so far - it's `sequential` by default in `submit.sh` for
+that reason. Only switch to `parallel` for the real run after
+`submit_sweep.sh`'s results on your actual cluster hardware show it's
+worthwhile at the core count you plan to use.
 
 ### Where output lands
 
-`submit_advection_run.sh` writes the model's real output
-(`output_ps.nc`, `lifestats.csv`, etc.) to
-`results/advection_<N_SUPER>si_<DURATION>y/job<slurm-job-id>/bench_run/`
-under `REPO_ROOT` - not to an ephemeral `/tmp` directory inside the
+`submit.sh` writes the model's real output (`output_ps.nc`,
+`lifestats.csv`, etc.) to
+`results/<config basename>/job<slurm-job-id>/<run.name>/` under
+`REPO_ROOT` (e.g. `results/advection_hpc_barents/job12345/advection_10000si_2y/`
+for the example config above - `run.name` is the config's own field, see
+`config/schema.py`) - not to an ephemeral `/tmp` directory inside the
 container, which would otherwise disappear (or live on node-local scratch
-never seen again) once the job ends. `submit_scaling_sweep.sh`'s jobs
-don't do this (only their timing summary line is kept) - that sweep is
-about wall-clock scaling, not the scientific output itself.
+never seen again) once the job ends. `submit_sweep.sh`'s jobs don't do
+this (only their timing summary line is kept) - that sweep is about
+wall-clock scaling, not the scientific output itself.
 
 ### Known limitations to be aware of before a real run
 

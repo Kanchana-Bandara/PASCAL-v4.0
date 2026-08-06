@@ -13,10 +13,10 @@ from copy import deepcopy
 import numpy as np
 
 # Local imports
-import pascal42_mod_growthdevelopmentmetabolism as gdm
-import pascal42_mod_survival as sv
-import pascal42_mod_verticalmigration as vm
-from utils import dotdict
+from .biology import growth as gdm
+from .biology import survival as sv
+from .biology import vertical_migration as vm
+from .utils import dotdict
 
 EXPECTED_GENES = [
     "a1_bodysize",

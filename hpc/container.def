@@ -2,8 +2,8 @@ Bootstrap: docker
 From: continuumio/miniconda3:23.5.2-0
 
 %labels
-    Version 2.2
-    Description Runtime environment for PASCAL (pascal_modular conda env) benchmarking/HPC scaling, plus download-cmems/run-benchmark apps for the real multi-year advection HPC test. Fixes a previous version that could not build (referenced a nonexistent environment.yaml - the real file is environment.yml - and used an unrelated project's conda env name throughout) and a bug where runtime `pip install -e` silently fell back to a --user install that corrupted the host's real Python environment via the bind-mounted $HOME (see %post comments).
+    Version 2.3
+    Description Runtime environment for PASCAL (pascal_modular conda env) benchmarking/HPC scaling, plus download-cmems/run/run-benchmark apps for the real multi-year advection HPC test. container/ was renamed to hpc/ and run.py (single YAML-config-driven entrypoint, see config/runs/) replaced the scattered CLI-flags/env-vars/hardcoded-scenario-defaults surface the run-benchmark app (kept, for ad hoc synthetic-scenario benchmarking) used to be the only option for.
 
 %post
     apt-get update -y && apt-get install -y --no-install-recommends \
@@ -79,51 +79,71 @@ From: continuumio/miniconda3:23.5.2-0
 # to remember/copy-paste the underlying python invocation correctly.
 
 %apprun download-cmems
-    exec /pascal/container/run_in_container.sh python /pascal/container/download_cmems_data.py "$@"
+    exec /pascal/hpc/run_in_container.sh python /pascal/hpc/download_cmems_data.py "$@"
 
 %applabels download-cmems
     Purpose download-a-local-CMEMS-netCDF-subset
 
 %apphelp download-cmems
-    Downloads a local CMEMS netCDF subset for offline use by the
-    run-benchmark app's advection_cmems_file scenario. Needs internet
-    access and Copernicus Marine credentials (env vars or ~/.netrc) - run
-    this on the HPC login node, not inside a submitted compute job (most
-    clusters give compute nodes no internet egress). See
-    container/download_cmems_data.py for all options.
+    Downloads a local CMEMS netCDF subset for offline use by a run config's
+    reader.cmems_file field (see config/runs/advection_hpc_barents.yaml).
+    Needs internet access and Copernicus Marine credentials (env vars or
+    ~/.netrc) - run this on the HPC login node, not inside a submitted
+    compute job (most clusters give compute nodes no internet egress). See
+    hpc/download_cmems_data.py for all options.
 
     apptainer run --app download-cmems --writable-tmpfs \
         --bind "$(pwd)":/pascal \
         --bind /path/to/opendrift_pascal:/opendrift \
-        container/pascal.sif \
+        hpc/pascal.sif \
         --min-lon 9 --max-lon 20 --min-lat 67 --max-lat 73 \
         --start-date 2022-01-01 --end-date 2024-01-01 \
         --output-directory inputdata/cmems --output-filename barents_2022_2024.nc
 
     (--output-directory under the bind-mounted repo, e.g. inputdata/cmems,
-    so the file is visible at container/HPC run time via the same --bind
-    without depending on Apptainer's default /tmp or $HOME auto-mounts,
-    which some sites disable. *.nc is already gitignored.)
+    so the file is visible at HPC run time via the same --bind without
+    depending on Apptainer's default /tmp or $HOME auto-mounts, which some
+    sites disable. *.nc is already gitignored.)
+
+%apprun run
+    exec /pascal/hpc/run_in_container.sh python /pascal/run.py "$@"
+
+%applabels run
+    Purpose run-pascal-from-a-yaml-config
+
+%apphelp run
+    Runs run.py inside the container - a real scientific run driven by a
+    single YAML config (see config/runs/*.yaml and config/schema.py for
+    every field a config can set). Normally invoked via hpc/submit.sbatch
+    (submitted through hpc/submit.sh or hpc/submit_sweep.sh), not by hand -
+    see usermanual.md's "Running the model in parallel using the
+    container" section for the full workflow.
+
+    apptainer run --app run --writable-tmpfs \
+        --bind "$(pwd)":/pascal \
+        --bind /path/to/opendrift_pascal:/opendrift \
+        hpc/pascal.sif \
+        --config config/runs/advection_hpc_barents.yaml \
+        --override reader.cmems_file=inputdata/cmems/barents_2022_2024.nc
 
 %apprun run-benchmark
-    exec /pascal/container/run_in_container.sh python /pascal/benchmarks/run_local_benchmark.py "$@"
+    exec /pascal/hpc/run_in_container.sh python /pascal/benchmarks/run_local_benchmark.py "$@"
 
 %applabels run-benchmark
-    Purpose run-a-PASCAL-benchmark-or-HPC-scaling-test
+    Purpose run-a-pascal-benchmark-with-cli-flags-instead-of-a-config
 
 %apphelp run-benchmark
-    Runs benchmarks/run_local_benchmark.py inside the container - the 1D/
-    advection synthetic scenarios, or advection_cmems_file against a file
-    from the download-cmems app above. Normally invoked via
-    container/hpc_scaling_test.sbatch (submitted through
-    submit_scaling_sweep.sh or submit_advection_run.sh), not by hand - see
-    usermanual.md's "Running the model in parallel using the container"
-    section for the full workflow.
+    Runs benchmarks/run_local_benchmark.py inside the container - a
+    CLI-flags-driven alternative to the run app above, kept for ad hoc
+    synthetic-scenario benchmarking/profiling (see BENCHMARKING.md). For an
+    actual scientific run, prefer the run app: it's driven by a versioned
+    YAML config instead of flags that have to be retyped/copy-pasted
+    correctly every time.
 
     apptainer run --app run-benchmark --writable-tmpfs \
         --bind "$(pwd)":/pascal \
         --bind /path/to/opendrift_pascal:/opendrift \
-        container/pascal.sif \
+        hpc/pascal.sif \
         --scenario advection_cmems_file \
         --cmems-file inputdata/cmems/barents_2022_2024.nc \
         --n-super 10000 --duration 2 --start-date 2022-01-01
@@ -132,7 +152,7 @@ From: continuumio/miniconda3:23.5.2-0
     Provides the pascal_modular conda environment only - not the PASCAL
     model code or opendrift, both of which are actively-developed local
     checkouts meant to be bind-mounted at run time. See
-    container/run_in_container.sh, usermanual.md's "Running the model in
+    hpc/run_in_container.sh, usermanual.md's "Running the model in
     parallel using the container" section, and BENCHMARKING.md for usage.
 
     Build (from the repo root, pascal_classparallel_branch/) - needs
@@ -140,17 +160,17 @@ From: continuumio/miniconda3:23.5.2-0
     ordinary users. Build locally (or in CI) and copy the resulting
     pascal.sif to the cluster rather than assuming the build itself can
     run there:
-        apptainer build --fakeroot container/pascal.sif container/container.def
+        apptainer build --fakeroot hpc/pascal.sif hpc/container.def
 
     Run directly (from the repo root; adjust the opendrift_pascal path):
         apptainer exec --writable-tmpfs \
             --bind "$(pwd)":/pascal \
             --bind /path/to/opendrift_pascal:/opendrift \
-            container/pascal.sif \
-            /pascal/container/run_in_container.sh \
-            python /pascal/benchmarks/run_local_benchmark.py \
-                --scenario 1d --n-super 200 --duration 0.5
+            hpc/pascal.sif \
+            /pascal/hpc/run_in_container.sh \
+            python /pascal/run.py --config config/runs/advection_quick_check.yaml
 
     Or via the named apps (see `apptainer run-help --app <name> pascal.sif`
-    for each): download-cmems (fetch a local CMEMS subset), run-benchmark
-    (run the model, including against that subset).
+    for each): download-cmems (fetch a local CMEMS subset), run (run the
+    model from a YAML config - the normal path), run-benchmark (CLI-flags
+    benchmarking/profiling alternative to run).

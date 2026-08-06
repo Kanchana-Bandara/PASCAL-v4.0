@@ -34,14 +34,14 @@ for _bad in ("", str(REPO_ROOT)):
     while _bad in sys.path:
         sys.path.remove(_bad)
 
-BENCHMARKS_DIR = REPO_ROOT / "benchmarks"
-if str(BENCHMARKS_DIR) not in sys.path:
-    sys.path.insert(0, str(BENCHMARKS_DIR))
+SCENARIOS_DIR = REPO_ROOT / "scenarios"
+if str(SCENARIOS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCENARIOS_DIR))
 
 import numpy as np  # noqa: E402
 
-from coupler import PascalAdvection  # noqa: E402
-from scenario import (  # noqa: E402
+from pascal.coupler import PascalAdvection  # noqa: E402
+from builders import (  # noqa: E402
     build_advection_scenario,
     build_cmems_advection_scenario_from_file,
 )

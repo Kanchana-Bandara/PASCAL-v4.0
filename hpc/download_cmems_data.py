@@ -2,7 +2,7 @@
 """Download a local CMEMS (Copernicus Marine) netCDF subset for an offline
 PASCAL advection run.
 
-Why this exists: benchmarks/scenario.py::build_cmems_advection_scenario()
+Why this exists: scenarios/builders.py::build_cmems_advection_scenario()
 uses opendrift's reader_copernicusmarine.Reader, which streams data live
 over the network on every timestep query. That's fine for short
 verification runs from a machine with internet access, but wrong for an
@@ -11,8 +11,9 @@ and a multi-year run would otherwise make thousands of blocking network
 calls against a rate-limited external API. This script does the network
 part once, up front (intended to run on the HPC login node, which
 typically does have internet access), producing a local file that
-benchmarks/scenario.py::build_cmems_advection_scenario_from_file() then
-reads entirely offline.
+scenarios/builders.py::build_cmems_advection_scenario_from_file() then
+reads entirely offline (via run.py --config config/runs/advection_hpc_barents.yaml,
+whose reader.cmems_file field points at it).
 
 Default variables/dataset match the mapping confirmed working in
 BENCHMARKING.md ("The standard_name_mapping fix") for the physical Arctic
@@ -43,9 +44,8 @@ Usage:
         --output-filename barents_2022_2024.nc
 
 Run on the login node (or anywhere with internet + credentials) BEFORE
-submitting the actual Slurm job - see container/hpc_advection_run.sbatch
-and usermanual.md's "Running the model in parallel using the container"
-section.
+submitting the actual Slurm job - see hpc/submit.sh and usermanual.md's
+"Running the model in parallel using the container" section.
 """
 
 import argparse
@@ -58,7 +58,7 @@ DEFAULT_DATASET_ID = "cmems_mod_arc_phy_anfc_6km_detided_P1D-m"
 # thetao/mlotst need the explicit rename below; vxo/vyo already carry
 # CF standard_names OpenDrift recognizes without help (confirmed 2026-08-04).
 DEFAULT_VARIABLES = ["thetao", "mlotst", "vxo", "vyo"]
-# Matches coupler.DEFAULT_DEPTHRANGE's max (1246m) - the deepest level
+# Matches pascal.coupler.DEFAULT_DEPTHRANGE's max (1246m) - the deepest level
 # PASCAL's global_settings['depthrange'] ever asks for by default.
 DEFAULT_MAX_DEPTH = 1246.0
 

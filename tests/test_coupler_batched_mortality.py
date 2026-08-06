@@ -10,8 +10,8 @@ would only exercise the dsc0 path and wouldn't catch a batching bug in the
 dsc2 code specifically.
 """
 
-from coupler import Pascal1D
-from scenario import build_1d_scenario
+from pascal.coupler import Pascal1D
+from builders import build_1d_scenario
 
 
 def _per_individual_update_lifestage(sim):

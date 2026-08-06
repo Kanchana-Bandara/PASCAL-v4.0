@@ -15,7 +15,7 @@ import os
 
 import numpy as np
 
-from coupler import DEFAULT_DEPTHRANGE
+from pascal.coupler import DEFAULT_DEPTHRANGE
 
 PROFILE_VARS = ["temperature", "food1concentration", "irradiance", "pred1dens"]
 
@@ -350,12 +350,12 @@ def build_cmems_advection_scenario_from_file(
     headless="bench_run",
 ):
     """Same scientific setup as build_cmems_advection_scenario(), but reads
-    a local netCDF file (as produced by container/download_cmems_data.py)
+    a local netCDF file (as produced by hpc/download_cmems_data.py)
     via reader_netCDF_CF_generic instead of streaming live data via
     reader_copernicusmarine. Intended for actual HPC runs, where compute
     nodes typically have no internet access and a multi-year run can't
     afford per-timestep calls to a rate-limited external API - see
-    container/download_cmems_data.py's module docstring and
+    hpc/download_cmems_data.py's module docstring and
     usermanual.md's "Running the model in parallel using the container"
     section.
 
@@ -416,3 +416,111 @@ def build_cmems_advection_scenario_from_file(
         },
         "headless": headless,
     }
+
+
+def build_global_settings_from_config(biology):
+    """Build the global_settings dict PascalSimulation expects directly
+    from a run config's biology section (see config/schema.py's DEFAULTS
+    for the values this reproduces when nothing is overridden), instead
+    of build_global_settings()'s fixed constants above - this is what
+    actually makes biology parameters configurable per run rather than
+    only the stochastic flag build_global_settings() ever exposed.
+    """
+    cmm_mid = np.array(biology["cmm_mid"])
+    settings = {
+        "developmentalcoefficient": np.array(biology["developmentalcoefficient"]),
+        "maxirradiance": biology["maxirradiance"],
+        "minirradiance": biology["minirradiance"],
+        "cmm_lower": cmm_mid * 0.9,
+        "cmm_upper": cmm_mid * 1.1,
+        "ageceiling": biology["ageceiling"],
+        "fecundityceiling": biology["fecundityceiling"],
+        "nonvisualpredatorreldensity": biology["nonvisualpredatorreldensity"],
+        "backgroundmortalityrisk": biology["backgroundmortalityrisk"],
+        "virtualindividualthrehold": biology["virtualindividualthrehold"],
+        "diapausemetabolicrateadj0": biology["diapausemetabolicrateadj0"],
+        "diapausemetabolicrateadj1": biology["diapausemetabolicrateadj1"],
+        "energyallocthreshold1": biology["energyallocthreshold1"],
+        "energyallocthreshold2": biology["energyallocthreshold2"],
+        "stochastic": biology["stochastic"],
+        "diapausedepththreshold0": biology["diapausedepththreshold0"],
+        "diapausedepththreshold1": biology["diapausedepththreshold1"],
+        "diapausedepththreshold2": biology["diapausedepththreshold2"],
+        "maxmatingdistance": biology["maxmatingdistance"],
+    }
+    if biology.get("depthrange") is not None:
+        settings["depthrange"] = np.array(biology["depthrange"])
+    return settings
+
+
+def build_scenario_from_config(config):
+    """Build PascalSimulation kwargs from a validated run config (see
+    config/loader.py::load_config()). Dispatches to the build_*_scenario()
+    functions above for reader/tracker wiring (unchanged, so behavior for
+    a default/empty config matches what those functions always did), then
+    overlays the config's population/time/biology/tracker/output sections
+    so a single YAML file controls everything a run needs - not just the
+    handful of fields the old CLI/env-var surface exposed.
+    """
+    run = config["run"]
+    population = config["population"]
+    time_cfg = config["time"]
+    location = config["location"]
+    reader = config["reader"]
+
+    common = dict(
+        n_super_individuals=population["n_super_individuals"],
+        n_virtual_per_super=population["n_virtual_per_super"],
+        duration_years=time_cfg["duration_years"],
+        timestep_seconds=time_cfg["timestep_seconds"],
+        seeding_rate=population["seeding_rate"],
+        stochastic=config["biology"]["stochastic"],
+        seed=run["seed"],
+        headless=run["name"],
+    )
+
+    scenario = run["scenario"]
+    if scenario == "1d":
+        kwargs = build_1d_scenario(**common)
+    elif scenario == "advection":
+        kwargs = build_advection_scenario(**common)
+        if location.get("start_lon") is not None and location.get("start_lat") is not None:
+            kwargs["start_locations"] = [[location["start_lon"], location["start_lat"]]]
+    elif scenario == "advection_cmems_file":
+        start_date = (
+            dt.datetime.fromisoformat(time_cfg["start_date"])
+            if time_cfg.get("start_date") else None
+        )
+        kwargs = build_cmems_advection_scenario_from_file(
+            reader["cmems_file"],
+            start_date=start_date,
+            start_location=(location["start_lon"], location["start_lat"]),
+            food1concentration_constant=reader["food1concentration"],
+            pred1dens_constant=reader["pred1dens"],
+            pred1lightdep_constant=reader["pred1lightdep"],
+            irradiance_constant=reader["irradiance"],
+            **common,
+        )
+    else:
+        raise ValueError(f"Unknown run.scenario: {scenario!r}")
+
+    kwargs["global_settings"] = build_global_settings_from_config(config["biology"])
+
+    tracker = config.get("tracker") or {}
+    kwargs.setdefault("tracker_config", {})
+    if tracker.get("use_auto_landmask") is not None:
+        kwargs["tracker_config"]["general:use_auto_landmask"] = tracker["use_auto_landmask"]
+    if tracker.get("diffusivitymodel") is not None:
+        kwargs["tracker_config"]["vertical_mixing:diffusivitymodel"] = tracker["diffusivitymodel"]
+    if tracker.get("diapause_depth") is not None:
+        kwargs["diapause_depth"] = tracker["diapause_depth"]
+
+    output = config.get("output") or {}
+    if output.get("outputgrid") is not None:
+        kwargs["outputgrid"] = output["outputgrid"]
+    if output.get("debug_variables"):
+        kwargs["debug"] = output["debug_variables"]
+    if output.get("verbose") is not None:
+        kwargs["verbose"] = output["verbose"]
+
+    return kwargs

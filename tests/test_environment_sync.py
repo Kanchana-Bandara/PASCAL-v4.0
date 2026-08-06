@@ -16,8 +16,8 @@ temperature ramp before this fix was written.
 
 import numpy as np
 
-from coupler import Pascal1D
-from scenario import build_1d_scenario
+from pascal.coupler import Pascal1D
+from builders import build_1d_scenario
 
 
 def test_individual_environment_reference_tracks_current_timestep(tmp_path, monkeypatch):

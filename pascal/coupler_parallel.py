@@ -41,9 +41,9 @@ from multiprocessing import Lock, Pool, Value, cpu_count
 
 import numpy as np
 
-from coupler import PascalSimulation, Pascal1D, PascalAdvection
-from individual import PROFILE_ENVIRONMENT_VARIABLES, SCALAR_ENVIRONMENT_VARIABLES
-from utils import dotdict
+from .coupler import PascalSimulation, Pascal1D, PascalAdvection
+from .individual import PROFILE_ENVIRONMENT_VARIABLES, SCALAR_ENVIRONMENT_VARIABLES
+from .utils import dotdict
 
 
 def _local_environment_context(individual):
