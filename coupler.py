@@ -618,6 +618,16 @@ class PascalAdvection(PascalSimulation):
 
         self.tracker.set_config('general:use_auto_landmask', False)
         self.tracker.set_config('general:seafloor_action', 'lift_to_seafloor')
+        # Default 'stranding' deactivates (and physically removes) any
+        # element that touches land, which permanently shrinks and
+        # reindexes self.tracker.elements - environment_index (a raw
+        # array position, handed out once at seed() and kept for an
+        # individual's whole life) then silently points at the wrong
+        # particle, or goes out of bounds during respawn(). 'previous'
+        # instead bounces a grounded element back to its last wet
+        # position, keeping the elements array (and therefore
+        # environment_index) stable for the run's lifetime.
+        self.tracker.set_config('general:coastline_action', 'previous')
 
         if self.tracker_config is not None:
             for k,v in self.tracker_config.items():

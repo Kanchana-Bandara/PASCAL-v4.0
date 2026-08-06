@@ -696,6 +696,201 @@ run from a login/submit node. `coupler_parallel.py` remains single-node
 only (no MPI) - see `submit_scaling_sweep.sh`'s own comments for why a
 multi-node test would be separate, larger work.
 
+## Fixed: HPC IndexError in respawn() (environment_index vs. OpenDrift element deactivation)
+
+Found via the real Phase 8 job (`hpc_test/results/pascal_advection_1736647.log`,
+10,000 super-individuals/2y/real Barents Sea CMEMS file): crashed at ~33%
+progress (month 9) with `IndexError: index 9970 is out of bounds for axis 0
+with size 9970` in `coupler.py::set_tracker()`, called from `respawn()`.
+
+`environment_index` (assigned once per super-individual at `seed()`, kept
+for its whole life) is a raw array position into
+`self.tracker.elements.lon`/`.lat`. That's only valid if the array never
+changes shape - but OpenDrift's `deactivate_elements()` →
+`elements.move_elements()` (`opendrift_pascal/opendrift/elements/elements.py`)
+physically **removes** rows via boolean-mask compaction
+(`self_var[~indices]`) whenever an element is deactivated. `general:coastline_action`'s
+default, `'stranding'`, deactivates any element that touches land - a real
+risk here, since the run's start point (14.25°E, 69.8°N) sits in the
+land-dense Lofoten archipelago and `general:use_auto_landmask: True` is set
+for this scenario (`build_cmems_advection_scenario_from_file`). Each
+deactivation both shrinks the array (10000 → 9970 by month 9 - the crash
+above) *and* shifts every later element's position down a row, so even
+in-bounds `environment_index` values could silently point at the wrong
+particle after any deactivation, not just crash.
+
+Fixed in `coupler.py::PascalAdvection.prep_environment()`: default
+`general:coastline_action` to `'previous'` (bounce a grounded element back
+to its last wet position) instead of OpenDrift's own `'stranding'` default -
+same pattern already used for `general:seafloor_action` (`'lift_to_seafloor'`)
+just above it. Confirmed by reading OpenDrift's own
+`interact_with_coastline()`: `'previous'` only ever deactivates an element
+if it was seeded directly on land (`age_seconds == 0`), which doesn't apply
+to PASCAL's `respawn()`/`seed()` (locations always come from either
+`start_locations` or an existing live particle's current, necessarily-wet
+position) - so in PASCAL's actual usage this keeps the elements array a
+fixed size for the run's lifetime.
+
+`tests/test_coastline_stability.py` adds two regression tests: the config
+default is actually wired up, and (empirically, not just by reading the
+source) forcing every element onto land and running OpenDrift's real
+`interact_with_coastline()` + `remove_deactivated_elements()` no longer
+shrinks `self.tracker.elements` - confirmed this reproduces the original
+shrink under the old `'stranding'` default and doesn't under the fix.
+Verified end-to-end too: re-ran the exact failing job's parameters
+(`benchmarks/run_local_benchmark.py --scenario advection_cmems_file
+--n-super 10000 --duration 2 ...` against the real
+`hpc_test/inputdata/barents_2022_2024.nc`) - now completes all 2920
+timesteps without error (`wall_time_s=131.025`).
+
+**Not fixed, and outside this investigation's scope**: that same
+verification run's population collapses to exactly 0 by February 2023
+(month 14) - looks like a separate, pre-existing food/mortality-model
+issue (plausibly related to the already-documented "live-CMEMS reader
+feeds PASCAL constant fallback values" finding above, though this run used
+the offline file reader, which the table above shows *does* get real
+temperature/mld/velocity), not anything to do with `environment_index`.
+Flagging for whoever owns the biological model, not investigated further
+here.
+
+There's also a resource-exhaustion risk this fix doesn't address: OpenDrift's
+seeded-element pool is never replenished (`respawn()`/`seed()` only
+overwrite `lon`/`lat` on existing elements, never call
+`tracker.seed_elements()` again), so `free_env_indices` can still only ever
+shrink, never regrow, if elements are deactivated for any reason not
+covered by `'previous'` (e.g. `missing_data`, if an element ever drifts
+outside a bounded reader's spatial/temporal coverage - not observed in this
+run, since `general:use_auto_landmask: True` sources `land_binary_mask`
+from OpenDrift's own global landmask, independent of the CMEMS file's grid
+extent, and the other required variables all have non-`None` fallbacks). If
+that ever becomes a real risk (e.g. a domain small enough, or a reader
+config without a global landmask), the robust fix is to key
+`environment_index` off OpenDrift's stable per-element `ID` field instead
+of raw array position, with a reconciliation step so PASCAL notices when
+OpenDrift deactivates a particle out from under a still-living
+super-individual - a materially bigger change, not attempted here since
+nothing currently exercises that path.
+
+## Benchmarking OpenDrift stepping vs. IBM stepping (particle-tracking parallelisation question)
+
+`prompt_debug.txt` raised a second, related question: OpenDrift has no
+native parallelism, so *any* IBM-side parallelisation would still be
+bottlenecked by single-process particle tracking - unless benchmarking
+shows that bottleneck doesn't actually bind at the scale that matters.
+Measured with `benchmarks/tracker_vs_ibm_benchmark.py`, which splits each
+timestep of `PascalSimulation.run()`'s loop into `update_environment()`
+(OpenDrift's own `tracker.run_1step()` - advection, vertical mixing,
+environment interpolation) vs. everything else (`sync_environment_references`,
+`update_lifestage`, `log_spatial`, `gene_hunt`, `clean_dead`, `respawn` -
+i.e. the IBM/coupler side).
+
+Real CMEMS file reader (`hpc_test/inputdata/barents_2022_2024.nc`, same file
+as the Phase 8 job above), `n_virtual_per_super=10000` throughout (matching
+the real deployment target - see `prompt_debug.txt`):
+
+```
+ n_super  tracker_s      ibm_s  tracker_%            pop  n_active
+     200      0.177      0.147      54.7%      1012765.1       155
+    1000      0.224      0.766      22.6%      4959274.4       775
+    5000      0.367      3.506       9.5%     24887978.2      3875
+   10000      0.561      7.595       6.9%     49779664.2      7750
+   20000      0.915     14.632       5.9%     99387272.5     15500
+```
+
+(20000-row measured with the synthetic `ConstantReader` variant, `--reader
+constant`; same qualitative shape as the CMEMS-file numbers above, and
+included since it's the largest size tested. `n_active` here is
+super-individual count after growth/mortality over the short measured
+window, not the seeded `n_super` - it's what the per-step cost actually
+scales against.)
+
+**OpenDrift's own per-step cost (`tracker_s`) is nearly flat as
+super-individual count grows - roughly 5x from 200 to 20000 individuals
+(100x more particles) - while IBM cost (`ibm_s`) grows almost linearly, as
+expected for a per-individual Python loop.** By 10,000 super-individuals
+(the real deployment target), OpenDrift is under 7% of per-step wall time;
+by 20,000 it's under 6%. This holds with both a spatially-uniform
+`ConstantReader` and the real bounded CMEMS grid reader, so it isn't an
+artifact of a trivially-cheap reader - OpenDrift's per-step environment
+fetch/interpolation is evidently vectorized across all active elements in
+one call, dominated by fixed per-call overhead rather than per-particle
+cost, at least up to the sizes tested here.
+
+**This changes the plan** `prompt_debug.txt` sketched (pooled OpenDrift
+runs, or a separate OpenDrift/IBM compute-pool split with
+gene_hunt/respawn-boundary sync): neither is justified by what's actually
+measured. OpenDrift isn't the bottleneck at the scale PASCAL targets - the
+IBM side already is, by a growing margin as super-individual count
+increases, and that's exactly what's already vectorization-targeted (see
+"Vectorizing update_lifestage()'s hot path" above: `update_lifestage` is
+~79-80% of runtime, `stage_3_9`/vertical migration ~50%+ of that, not yet
+vectorized - domain review needed, see that section) or dispatch-targeted
+(see Phase 2's negative multiprocessing.Pool result above and its "Reduce
+IPC frequency" follow-up idea) rather than a reason to build a
+new, more complex environment_index-with-a-second-axis scheme for
+multiple OpenDrift pools/processes.
+
+**Caveats on this conclusion, so it isn't over-claimed:**
+- Measured over short windows (0.02-0.05 simulated years, tens of
+  timesteps) for turnaround speed, not the full 2-year target - re-check
+  if per-step cost characteristics are ever suspected to shift over a much
+  longer run (e.g. if population/particle spatial spread changes
+  OpenDrift's per-step cost structure in a way a short window wouldn't
+  catch).
+- This measures OpenDrift's own stepping cost in isolation, not multi-node
+  scaling economics generally - Phase 2's separate, already-measured
+  finding (`multiprocessing.Pool` nets a 22-27% *loss* on the IBM side due
+  to IPC overhead, at up to 1500 super-individuals on 8 laptop cores) is
+  about a different mechanism and isn't superseded by this.
+- If a future scenario needs far more virtual individuals *per*
+  super-individual, many more concurrent super-individuals than 20,000, or
+  a much higher-resolution/more expensive reader (e.g. a finer grid, more
+  required profile variables), OpenDrift's share should be re-measured
+  rather than assumed to stay negligible - nothing here rules out a
+  crossover point beyond what was tested, only that none appears in the
+  range that matches PASCAL's actual real-deployment scale.
+
+### Deferred design sketch: if OpenDrift ever does need parallelising
+
+Keeping this on record since it was asked for, even though the measurement
+above says not to build it yet. `prompt_debug.txt` named two approaches;
+here's how `environment_index` would need to change under each, and what
+would trigger picking one up for real.
+
+1. **N independent OpenDrift pools, one per IBM worker, each owning a
+   fraction of the particles.** `environment_index` becomes a pair `(pool_id,
+   local_index)` instead of a single int - `free_env_indices` would need to
+   be per-pool, and anything that currently indexes
+   `self.tracker.elements.*` directly with a bare int (`set_tracker()`,
+   `log_spatial()`, `gene_hunt()`, `respawn()`'s `inherited_locations`,
+   `fecundity_proportional_selection()`) would need to route through the
+   right pool first. `gene_hunt()`'s nearest-male search and `respawn()`'s
+   into-any-available-space logic both need cross-super-individual
+   visibility (`prompt_debug.txt`'s own objection to naive parallelisation)
+   - under this design that means either an all-gather of positions across
+   pools before those two steps, or accepting gene_hunt/respawn only
+   consider same-pool candidates (a real behavior change, not just a
+   performance one - would need sign-off before implementing).
+2. **Separate OpenDrift/IBM compute pools, synced at gene_hunt/respawn
+   boundaries.** Avoids the cross-pool visibility problem above (IBM side
+   still sees one global view), at the cost of an explicit sync/handoff
+   protocol and OpenDrift's own single-process stepping becoming a
+   per-sync-interval serial section the IBM pool blocks on - exactly what
+   this section measured as small in absolute terms (currently <7% of
+   step time at 10,000 super-individuals), so the sync overhead this
+   design adds would need to stay well under that to be worth it.
+
+**Trigger for revisiting:** re-run
+`benchmarks/tracker_vs_ibm_benchmark.py` at whatever new scale prompts the
+question (more super-individuals, more virtual individuals per
+super-individual, or a heavier reader) - if `tracker_%` climbs
+meaningfully past what's measured here, pick approach 2 first (smaller,
+more contained change, no gene_hunt/respawn semantics change) unless the
+measured OpenDrift cost is large enough that per-sync serialization would
+itself dominate, in which case approach 1's cross-pool visibility question
+needs resolving with whoever owns the biology (Kanchana) before writing
+code.
+
 ## The real Phase 8 target: a multi-year, 10,000-super-individual advective run
 
 `submit_scaling_sweep.sh` answers "does multiprocessing pay off at HPC
